@@ -52,7 +52,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		client := api.EffectiveIPv6PDClient(spec.Client)
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
-		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		lease, _, err := routerstate.PDLeaseFromStore(store, base)
+		if err != nil {
+			return changes, err
+		}
 		previousClient := store.Get(base + ".client").Value
 		if previousClient != "" && previousClient != client {
 			var cleared bool
@@ -111,7 +114,11 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
 			}
 			lease.CurrentPrefix = ""
-			changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": no delegated prefix observable")})
+			value, err := store.SavePDLease(base, lease, res.ID()+": no delegated prefix observable")
+			if err != nil {
+				return changes, err
+			}
+			changes = append(changes, stateChange{Name: base + ".lease", Value: value})
 			continue
 		}
 		observedAt := store.Now().Format(time.RFC3339)
@@ -127,7 +134,11 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			lease.CurrentPrefix = ""
 			lease.LastPrefix = observedPrefix
 			lease.LastObservedAt = observedAt
-			changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": stale delegated prefix without transaction evidence")})
+			value, err := store.SavePDLease(base, lease, res.ID()+": stale delegated prefix without transaction evidence")
+			if err != nil {
+				return changes, err
+			}
+			changes = append(changes, stateChange{Name: base + ".lease", Value: value})
 			continue
 		}
 		lease.CurrentPrefix = observedPrefix
@@ -136,7 +147,11 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		if recorder, ok := store.(routerstate.EventRecorder); ok && previousPrefix != observedPrefix {
 			_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PrefixObserved", "observed delegated IPv6 prefix "+observedPrefix)
 		}
-		changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")})
+		value, err := store.SavePDLease(base, lease, res.ID()+": observed delegated prefix lease")
+		if err != nil {
+			return changes, err
+		}
+		changes = append(changes, stateChange{Name: base + ".lease", Value: value})
 	}
 	return changes, nil
 }

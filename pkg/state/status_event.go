@@ -52,9 +52,9 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 		return nil, err
 	}
 	defer tx.Rollback()
-	var raw string
+	var raw, created, modified string
 	var generation sql.NullInt64
-	err = tx.QueryRow(`SELECT coalesce(status,'{}'), observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation)
+	err = tx.QueryRow(`SELECT coalesce(status,'{}'), observed_generation,created_at,modified_at FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation, &created, &modified)
 	found := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -63,6 +63,11 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	if raw != "" {
 		if err := json.Unmarshal([]byte(raw), &current); err != nil {
 			return nil, fmt.Errorf("decode status for transactional update: %w", err)
+		}
+	}
+	if pdObject(objectRef{APIVersion: apiVersion, Kind: kind}) {
+		if err := readPDStatus(current, created, modified); err != nil {
+			return nil, err
 		}
 	}
 	if merge {
@@ -74,6 +79,11 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			next[key] = value
 		}
 		status = next
+	}
+	if pdObject(objectRef{APIVersion: apiVersion, Kind: kind}) {
+		if err := PreparePDLeaseStatus(current, status); err != nil {
+			return nil, err
+		}
 	}
 	write, event := build(current, status)
 	if !write {

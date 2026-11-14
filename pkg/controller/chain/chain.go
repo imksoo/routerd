@@ -208,6 +208,11 @@ func (s eventedStore) saveStatus(apiVersion, kind, name string, updates map[stri
 			next[key] = value
 		}
 	}
+	if apiVersion == api.NetAPIVersion && kind == "DHCPv6PrefixDelegation" {
+		if err := routerstate.PreparePDLeaseStatus(current, next); err != nil {
+			return err
+		}
+	}
 	write, event := buildStatusTransition(apiVersion, kind, name, current, next)
 	if !write {
 		return nil
@@ -293,6 +298,13 @@ func preserveStatusFields(status, current map[string]any, fields ...string) map[
 
 func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return s.Store.ObjectStatus(apiVersion, kind, name)
+}
+
+func (s eventedStore) PDLease(base string) (routerstate.PDLease, bool, error) {
+	return s.Store.PDLease(base)
+}
+func (s eventedStore) SavePDLease(base string, lease routerstate.PDLease, reason string) (routerstate.Value, error) {
+	return s.Store.SavePDLease(base, lease, reason)
 }
 
 func (s eventedStore) Get(name string) routerstate.Value {

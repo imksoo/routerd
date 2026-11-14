@@ -20,13 +20,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/ipiptunnel"
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/hostdeps"
-	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
@@ -97,6 +97,7 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		Phase:     "Healthy",
 	}
 
+	hasUnobservedTunnel := false
 	for _, res := range router.Spec.Resources {
 		rr := ResourceResult{
 			ID:       res.ID(),
@@ -212,6 +213,9 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && ((res.Kind == "Interface" && (rr.Observed["reason"] == "MTUMismatch" || rr.Observed["reason"] == "AdminDown")) || res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "IPv4Route" || res.Kind == "Package" || res.Kind == "Sysctl" || res.Kind == "SysctlProfile" || res.Kind == "DHCPv6PrefixDelegation" || res.Kind == "TunnelInterface" || res.Kind == "DSLiteTunnel" || res.Kind == "VirtualAddress" || res.Kind == "IPv6DelegatedAddress" || res.Kind == "IPv4StaticAddress") {
 			result.Phase = "Drifted"
 		}
+		if res.Kind == "TunnelInterface" && rr.Phase == "Unknown" {
+			hasUnobservedTunnel = true
+		}
 		result.Resources = append(result.Resources, rr)
 	}
 	for _, res := range hostdeps.DerivedPackageResources(router) {
@@ -234,6 +238,11 @@ func (e *Engine) evaluate(router, declared *api.Router, includePlan bool) (*Resu
 				Artifacts: artifactIntentsForResult(intents),
 			})
 		}
+	}
+
+	// An unobserved tunnel must not leave an otherwise healthy plan successful.
+	if result.Phase == "Healthy" && hasUnobservedTunnel {
+		result.Phase = "Unknown"
 	}
 
 	return result, nil
@@ -706,8 +715,11 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 					rr.Observed["reason"] = "PrefixDelegationInterfaceMismatch"
 				} else if active && ifname != "" && observed.Observed["interface"] == ifname && observed.Phase == daemonapi.ResourcePhaseBound {
 					if store, ok := e.Store.(routerstate.Store); ok {
-						lease, found := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)
-						if found && lease.CurrentPrefix != "" && lease.CurrentPrefix == observed.Observed["currentPrefix"] && lease.HasFreshTransactionEvidence(time.Now()) {
+						lease, found, leaseErr := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)
+						if leaseErr != nil {
+							rr.Warnings = append(rr.Warnings, leaseErr.Error())
+						}
+						if leaseErr == nil && found && lease.CurrentPrefix != "" && lease.CurrentPrefix == observed.Observed["currentPrefix"] && lease.HasFreshTransactionEvidence(time.Now()) {
 							rr.Phase = "Healthy"
 							delete(rr.Observed, "reason")
 						}
@@ -807,8 +819,11 @@ func (e *Engine) observeIPv6DelegatedAddress(res api.Resource, aliases map[strin
 		if actual, err := netip.ParsePrefix(address.String()); err == nil && actual == want {
 			rr.Observed["addressPresent"] = "true"
 			if store, ok := e.Store.(routerstate.Store); ok && !spec.SendRA && !spec.Announce {
-				lease, found := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+spec.PrefixDelegation)
-				if found && lease.CurrentPrefix == prefix && lease.HasFreshTransactionEvidence(time.Now()) {
+				lease, found, leaseErr := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+spec.PrefixDelegation)
+				if leaseErr != nil {
+					rr.Warnings = append(rr.Warnings, leaseErr.Error())
+				}
+				if leaseErr == nil && found && lease.CurrentPrefix == prefix && lease.HasFreshTransactionEvidence(time.Now()) {
 					rr.Phase = "Healthy"
 					delete(rr.Observed, "reason")
 				}
@@ -1326,104 +1341,42 @@ func (e *Engine) observeTunnelInterface(router *api.Router, res api.Resource, in
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s tunnel interface %s exists", spec.Mode, res.Metadata.Name))
 	}
 	if platform.CurrentOS() != platform.OSLinux || spec.Mode != "ipip" {
+		rr.Phase = "Unknown"
+		rr.Observed["reason"] = "TunnelObservationUnsupported"
 		return
 	}
-	local, remote := strings.TrimSpace(spec.Local), strings.TrimSpace(spec.Remote)
-	if spec.LocalFrom.Resource != "" {
-		local = resourcequery.Value(e.Store, spec.LocalFrom)
+	desired, pending, err := ipiptunnel.Resolve(*router, e.Store, res.Metadata.Name, spec)
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
 	}
-	if spec.RemoteFrom.Resource != "" {
-		remote = resourcequery.Value(e.Store, spec.RemoteFrom)
-	}
-	if prefix, err := netip.ParsePrefix(local); err == nil {
-		local = prefix.Addr().String()
-	}
-	if prefix, err := netip.ParsePrefix(remote); err == nil {
-		remote = prefix.Addr().String()
-	}
-	if local == "" || remote == "" {
+	if pending != "" {
 		rr.Phase = "Unknown"
 		rr.Observed["reason"] = "EndpointSourcePending"
+		rr.Observed["pendingSource"] = pending
 		return
 	}
-	out, err := runCommand("ip", "-j", "-d", "link", "show", "type", "ipip")
+	observed, err := ipiptunnel.Observe(context.Background(), desired.Name)
 	if err != nil {
 		rr.Phase = "Unknown"
-		rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe IPIP tunnels: %v", err))
+		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
-	var links []struct {
-		Name  string   `json:"ifname"`
-		Flags []string `json:"flags"`
-		MTU   int      `json:"mtu"`
-		Info  struct {
-			Kind string `json:"info_kind"`
-			Data struct {
-				Local  string `json:"local"`
-				Remote string `json:"remote"`
-				TTL    int    `json:"ttl"`
-			} `json:"info_data"`
-		} `json:"linkinfo"`
-	}
-	if err := json.Unmarshal(out, &links); err != nil {
-		rr.Phase = "Unknown"
-		rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode IPIP tunnels: %v", err))
-		return
-	}
-	ttl := spec.TTL
-	if ttl == 0 {
-		ttl = 64
-	}
-	mtu := hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
-	for _, link := range links {
-		if link.Name != res.Metadata.Name {
-			continue
-		}
-		rr.Observed["actualLocal"] = link.Info.Data.Local
-		rr.Observed["actualRemote"] = link.Info.Data.Remote
-		rr.Observed["actualMTU"] = strconv.Itoa(link.MTU)
-		if mtu > 0 {
-			rr.Observed["expectedMTU"] = strconv.Itoa(mtu)
-		}
-		if link.Info.Kind == "ipip" && link.Info.Data.Local == local && link.Info.Data.Remote == remote && link.Info.Data.TTL == ttl && (mtu == 0 || link.MTU == mtu) && slices.Contains(link.Flags, "UP") {
-			if spec.Address != "" {
-				out, err := runCommand("ip", "-j", "-4", "address", "show", "dev", link.Name)
-				if err != nil {
-					rr.Phase = "Unknown"
-					rr.Warnings = append(rr.Warnings, fmt.Sprintf("observe tunnel address %s: %v", link.Name, err))
-					return
-				}
-				var addresses []struct {
-					Info []struct {
-						Local  string `json:"local"`
-						Prefix int    `json:"prefixlen"`
-					} `json:"addr_info"`
-				}
-				if err := json.Unmarshal(out, &addresses); err != nil {
-					rr.Phase = "Unknown"
-					rr.Warnings = append(rr.Warnings, fmt.Sprintf("decode tunnel address %s: %v", link.Name, err))
-					return
-				}
-				for _, item := range addresses {
-					for _, address := range item.Info {
-						if fmt.Sprintf("%s/%d", address.Local, address.Prefix) == spec.Address {
-							rr.Observed["actualAddress"] = spec.Address
-							return
-						}
-					}
-				}
-				rr.Phase = "Drifted"
-				rr.Observed["reason"] = "TunnelAddressMissing"
-				return
-			}
-			return
-		}
-		rr.Phase = "Drifted"
-		rr.Observed["reason"] = "TunnelDifferent"
+	rr.Observed["actualLocal"] = observed.Info.Data.Local
+	rr.Observed["actualRemote"] = observed.Info.Data.Remote
+	rr.Observed["actualMTU"] = strconv.Itoa(observed.MTU)
+	rr.Observed["expectedMTU"] = strconv.Itoa(desired.MTU)
+	rr.Observed["actualAddress"] = strings.Join(observed.Addresses, ",")
+	if observed.Matches(desired) {
 		return
 	}
 	rr.Phase = "Drifted"
-	rr.Observed["reason"] = "TunnelMissing"
+	rr.Observed["reason"] = "TunnelDifferent"
+	if !observed.Exists {
+		rr.Observed["reason"] = "TunnelMissing"
+	}
+
 }
 
 func statusValueSourceLabel(source api.StatusValueSourceSpec) string {

@@ -26,6 +26,8 @@ type Value struct {
 }
 
 type Store interface {
+	PDLease(base string) (PDLease, bool, error)
+	SavePDLease(base string, lease PDLease, reason string) (Value, error)
 	Get(name string) Value
 	Set(name, value, reason string) Value
 	Unset(name, reason string) Value

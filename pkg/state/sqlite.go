@@ -495,7 +495,7 @@ func (s *SQLiteStore) Get(name string) Value {
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
 	if err != nil {
 		now := time.Now().UTC()
-		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+		return Value{Status: StatusUnknown, Reason: err.Error(), Since: now, UpdatedAt: now}
 	}
 	if value, ok := valueFromStatus(status, ref.Field); ok {
 		return value
@@ -554,6 +554,26 @@ func (s *SQLiteStore) Delete(name string) {
 }
 
 func (s *SQLiteStore) setLocked(name, status, value, reason string) Value {
+	ref := objectRefForKey(name)
+	if pdObject(ref) && ref.Field == "lease" {
+		var lease PDLease
+		var err error
+		if value != "" {
+			if !strings.HasPrefix(strings.TrimSpace(value), "{") {
+				err = fmt.Errorf("PD lease must be an object")
+			} else {
+				err = json.Unmarshal([]byte(value), &lease)
+			}
+		}
+		if err == nil {
+			var result Value
+			result, err = s.writePDLeaseLocked(ref, lease, status, reason)
+			if err == nil {
+				return result
+			}
+		}
+		return Value{Status: StatusUnknown, Reason: err.Error(), UpdatedAt: time.Now().UTC()}
+	}
 	now := time.Now().UTC()
 	current := s.getLocked(name)
 	since := current.Since
@@ -561,7 +581,9 @@ func (s *SQLiteStore) setLocked(name, status, value, reason string) Value {
 		since = now
 	}
 	next := Value{Status: status, Value: value, Reason: reason, Since: since, UpdatedAt: now}
-	_ = s.put(name, next)
+	if err := s.put(name, next); err != nil {
+		return Value{Status: StatusUnknown, Reason: err.Error(), Since: current.Since, UpdatedAt: now}
+	}
 	return next
 }
 
@@ -588,30 +610,62 @@ func (s *SQLiteStore) put(name string, value Value) error {
 	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		status = objectStatus{}
+	} else if err != nil {
+		return err
 	}
-	setStatusField(status, ref.Field, value)
+	if ref.Field == "lease" && value.Value != "" {
+		var lease PDLease
+		if !strings.HasPrefix(strings.TrimSpace(value.Value), "{") {
+			return fmt.Errorf("PD lease must be an object")
+		}
+		if err := json.Unmarshal([]byte(value.Value), &lease); err != nil {
+			return err
+		}
+		replacePDLease(status, lease, value)
+	} else {
+		setStatusField(status, ref.Field, value)
+	}
 	return s.saveStatus(ref, status)
 }
 
 func (s *SQLiteStore) loadStatus(apiVersion, kind, name string) (objectStatus, int64, error) {
-	var raw string
+	var raw, created, modified string
 	var generation sql.NullInt64
-	err := s.db.QueryRow(`SELECT coalesce(status,'{}'), observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation)
+	err := s.db.QueryRow(`SELECT coalesce(status,'{}'), observed_generation,created_at,modified_at FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation, &created, &modified)
 	if err != nil {
 		return nil, 0, err
 	}
 	status := objectStatus{}
-	if strings.TrimSpace(raw) != "" {
-		_ = json.Unmarshal([]byte(raw), &status)
+	if err := json.Unmarshal([]byte(raw), &status); err != nil && pdObject(objectRef{APIVersion: apiVersion, Kind: kind}) {
+		return nil, 0, err
+	}
+	if pdObject(objectRef{APIVersion: apiVersion, Kind: kind}) {
+		if err := readPDStatus(status, created, modified); err != nil {
+			return nil, 0, fmt.Errorf("PD lease %s: %w", name, err)
+		}
 	}
 	return status, generation.Int64, nil
 }
 
 func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
+	if pdObject(ref) {
+		current, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+		if errors.Is(err, sql.ErrNoRows) {
+			current = objectStatus{}
+		} else if err != nil {
+			return err
+		}
+		if err := PreparePDLeaseStatus(current, status); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	data, _ := json.Marshal(status)
+	data, err := json.Marshal(status)
+	if err != nil {
+		return err
+	}
 	if same, err := s.objectStatusUnchanged(ref, data); err != nil {
 		return err
 	} else if same {
@@ -620,7 +674,7 @@ func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 		return nil
 	}
 	uid := ref.APIVersion + "/" + ref.Kind + "/" + ref.Name
-	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
+	_, err = s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
 VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,
 		ref.APIVersion, ref.Kind, ref.Name, uid, nullGeneration(s.generation), string(data), now, now)
@@ -714,19 +768,27 @@ func (s *SQLiteStore) Variables() map[string]Value {
 	if s.closed {
 		return map[string]Value{}
 	}
-	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
+	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}'),created_at,modified_at FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
 		return map[string]Value{}
 	}
 	defer rows.Close()
 	out := map[string]Value{}
 	for rows.Next() {
-		var apiVersion, kind, name, raw string
-		if err := rows.Scan(&apiVersion, &kind, &name, &raw); err != nil {
+		var apiVersion, kind, name, raw, created, modified string
+		if err := rows.Scan(&apiVersion, &kind, &name, &raw, &created, &modified); err != nil {
 			continue
 		}
 		status := objectStatus{}
-		_ = json.Unmarshal([]byte(raw), &status)
+		if err := json.Unmarshal([]byte(raw), &status); err != nil {
+			continue
+		}
+		if pdObject(objectRef{APIVersion: apiVersion, Kind: kind}) {
+			if err := readPDStatus(status, created, modified); err != nil {
+				out["ipv6PrefixDelegation."+name+".lease"] = Value{Status: StatusUnknown, Reason: err.Error()}
+				continue
+			}
+		}
 		for key, value := range variablesFromObject(apiVersion, kind, name, status) {
 			out[key] = value
 		}
@@ -1235,6 +1297,9 @@ func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 	}
 	status, _, err := s.loadStatus(apiVersion, kind, name)
 	if err != nil {
+		if pdObject(objectRef{APIVersion: apiVersion, Kind: kind}) && !errors.Is(err, sql.ErrNoRows) {
+			return map[string]any{"phase": "Failed", "reason": "PDLeaseInvalid", "error": err.Error()}
+		}
 		return nil
 	}
 	out := map[string]any{}
@@ -1257,7 +1322,7 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 	if !exists {
 		return nil, fmt.Errorf("%w: required objects table is missing", ErrSchemaNotInitialized)
 	}
-	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
+	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}'),created_at,modified_at FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
 		return nil, err
 	}
@@ -1265,12 +1330,20 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 	var out []ObjectStatus
 	for rows.Next() {
 		var item ObjectStatus
-		var raw string
-		if err := rows.Scan(&item.APIVersion, &item.Kind, &item.Name, &raw); err != nil {
+		var raw, created, modified string
+		if err := rows.Scan(&item.APIVersion, &item.Kind, &item.Name, &raw, &created, &modified); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
+			if pdObject(objectRef{APIVersion: item.APIVersion, Kind: item.Kind}) {
+				return nil, err
+			}
 			item.Status = map[string]any{"error": err.Error()}
+		}
+		if pdObject(objectRef{APIVersion: item.APIVersion, Kind: item.Kind}) {
+			if err := readPDStatus(item.Status, created, modified); err != nil {
+				return nil, fmt.Errorf("PD lease %s: %w", item.Name, err)
+			}
 		}
 		out = append(out, item)
 	}
@@ -1655,22 +1728,11 @@ func objectRefForKey(key string) objectRef {
 
 func valueFromStatus(status objectStatus, field string) (Value, bool) {
 	if field == "lease" {
-		vars, _ := status["_variables"].(map[string]any)
-		if raw, ok := vars["lease"]; ok {
-			return decodeValue(raw)
+		value, ok, err := pdLeaseValue(status)
+		if err != nil {
+			return Value{Status: StatusUnknown, Reason: err.Error()}, true
 		}
-		lease := objectStatus{}
-		for key, value := range status {
-			if key != "_variables" {
-				lease[key] = value
-			}
-		}
-		if len(lease) == 0 {
-			return Value{}, false
-		}
-		data, _ := json.Marshal(lease)
-		now := time.Now().UTC()
-		return Value{Status: StatusSet, Value: string(data), Since: now, UpdatedAt: now}, true
+		return value, ok
 	}
 	if field == "value" {
 		return decodeValue(status["value"])
@@ -1681,23 +1743,7 @@ func valueFromStatus(status objectStatus, field string) (Value, bool) {
 
 func setStatusField(status objectStatus, field string, value Value) {
 	if field == "lease" {
-		var lease map[string]any
-		if strings.TrimSpace(value.Value) != "" {
-			_ = json.Unmarshal([]byte(value.Value), &lease)
-		}
-		vars := variablesMap(status)
-		vars["lease"] = encodeValueMap(value)
-		for key := range status {
-			if key != "_variables" {
-				delete(status, key)
-			}
-		}
-		for key, item := range lease {
-			status[key] = item
-		}
-		if len(vars) > 0 {
-			status["_variables"] = vars
-		}
+		replacePDLease(status, PDLease{}, value)
 		return
 	}
 	if field == "value" {
@@ -1711,18 +1757,7 @@ func setStatusField(status objectStatus, field string, value Value) {
 
 func deleteStatusField(status objectStatus, field string) {
 	if field == "lease" {
-		vars := variablesMap(status)
-		delete(vars, "lease")
-		for key := range status {
-			if key != "_variables" {
-				delete(status, key)
-			}
-		}
-		if len(vars) == 0 {
-			delete(status, "_variables")
-		} else {
-			status["_variables"] = vars
-		}
+		replacePDLease(status, PDLease{}, Value{Status: StatusUnknown})
 		return
 	}
 	if field == "value" {
@@ -1764,17 +1799,40 @@ func encodeValueMap(value Value) storedValue {
 }
 
 func decodeValue(raw any) (Value, bool) {
-	if raw == nil {
+	var decoded storedValue
+	switch item := raw.(type) {
+	case storedValue:
+		decoded = item
+	case map[string]any:
+		for key, target := range map[string]*string{"reason": &decoded.Reason, "since": &decoded.Since, "status": &decoded.Status, "updatedAt": &decoded.UpdatedAt, "value": &decoded.Value} {
+			if raw, exists := item[key]; exists {
+				text, ok := raw.(string)
+				if !ok {
+					return Value{}, false
+				}
+				*target = text
+			}
+		}
+	default:
 		return Value{}, false
 	}
-	data, _ := json.Marshal(raw)
-	var decoded storedValue
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Status == "" {
+	if decoded.Status != StatusSet && decoded.Status != StatusUnset && decoded.Status != StatusUnknown {
 		return Value{}, false
 	}
 	value := Value{Status: decoded.Status, Value: decoded.Value, Reason: decoded.Reason}
-	value.Since, _ = time.Parse(time.RFC3339Nano, decoded.Since)
-	value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, decoded.UpdatedAt)
+	var err error
+	if decoded.Since != "" {
+		value.Since, err = time.Parse(time.RFC3339Nano, decoded.Since)
+		if err != nil {
+			return Value{}, false
+		}
+	}
+	if decoded.UpdatedAt != "" {
+		value.UpdatedAt, err = time.Parse(time.RFC3339Nano, decoded.UpdatedAt)
+		if err != nil {
+			return Value{}, false
+		}
+	}
 	return value, true
 }
 
