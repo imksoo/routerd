@@ -30,11 +30,6 @@ func PlanResourceTeardownGC(desired map[string]bool, statuses []routerstate.Obje
 func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
 	var deletes []routerstate.ObjectStatus
 	for _, status := range statuses {
-		derivedHostState := status.APIVersion == api.SystemAPIVersion && (status.Kind == "KernelModule" || status.Kind == "NetworkAdoption")
-		if (api.IsRemovedLegacyKind(status.Kind) && !(derivedHostState && desired[ObjectStatusID(status)])) || (status.APIVersion == api.RouterAPIVersion && status.Kind == "Router" && status.Name == "sam-dataplane") {
-			deletes = append(deletes, status)
-			continue
-		}
 		if SyntheticObjectStatus(status) {
 			continue
 		}
@@ -74,11 +69,7 @@ func ConfigResourceObjectStatus(status routerstate.ObjectStatus) bool {
 	if status.APIVersion == api.RouterAPIVersion {
 		return false
 	}
-	apiVersion := APIVersionForKind(status.Kind)
-	if apiVersion == "" {
-		apiVersion = legacyStatusAPIVersionForKind(status.Kind)
-	}
-	return status.APIVersion == apiVersion
+	return status.APIVersion == APIVersionForKind(status.Kind)
 }
 
 func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
@@ -97,15 +88,4 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 
 func ObjectStatusID(status routerstate.ObjectStatus) string {
 	return ResourceKey(status.APIVersion, status.Kind, status.Name)
-}
-
-func legacyStatusAPIVersionForKind(kind string) string {
-	switch kind {
-	case "Bridge", "VXLANSegment", "IPv4StaticRoute", "IPv6StaticRoute":
-		return api.NetAPIVersion
-	case "ServiceUnit":
-		return api.SystemAPIVersion
-	default:
-		return ""
-	}
 }
