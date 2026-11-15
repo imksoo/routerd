@@ -187,7 +187,8 @@ func serve(ctx context.Context, cfg eventd.Config, receiver *eventd.Receiver) er
 	// Bind to the specific configured address (NOT 0.0.0.0 unless the operator
 	// explicitly set it).
 	addr := net.JoinHostPort(cfg.Listen.Address, strconv.Itoa(cfg.Listen.Port))
-	listener, err := net.Listen("tcp", addr)
+	lc := listenConfig()
+	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
