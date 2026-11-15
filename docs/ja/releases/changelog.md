@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261115.1721
+
 - ブラウザーのコンフィグ作成ツールを削除し、全リソース種類のYAML定義を含むMarkdown文書へ切り替えました。
 
 ## v20261114.0631

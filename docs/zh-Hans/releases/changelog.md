@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261115.1721
+
 - 移除浏览器配置向导，改为发布包含所有资源类型YAML定义的Markdown文档。
 
 ## v20261114.0631

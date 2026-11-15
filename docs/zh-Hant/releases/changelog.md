@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261115.1721
+
 - 移除瀏覽器設定精靈，改為發布包含所有資源種類YAML定義的Markdown文件。
 
 ## v20261114.0631
