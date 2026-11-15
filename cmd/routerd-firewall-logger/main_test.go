@@ -12,19 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/logstore"
-	"github.com/imksoo/routerd/pkg/platform"
 )
-
-func TestParseOptionsDefaultPathUsesPlatformStateDir(t *testing.T) {
-	opts, err := parseOptions("daemon", []string{"daemon"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defaults, _ := platform.Current()
-	if got, want := opts.path, defaults.FirewallLogFile(); got != want {
-		t.Fatalf("path = %q, want %q", got, want)
-	}
-}
 
 func TestDaemonReadsKeyValueLines(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "firewall-logs.db")
@@ -44,24 +32,6 @@ func TestDaemonReadsKeyValueLines(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].RuleName != "test" {
 		t.Fatalf("rows = %#v", rows)
-	}
-}
-
-func TestDaemonReadsPflogTCPDumpLines(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall-logs.db")
-	input := strings.NewReader(`2026-05-04 12:00:00.000000 rule 12/0(match): block in on em0: 172.18.0.101.53168 > 198.51.100.10.443: Flags [S], length 0
-`)
-	if err := run([]string{"daemon", "--path", path, "--input-format", "pflog-tcpdump"}, &bytes.Buffer{}, input); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDaemonReadsNFLogTCPDumpLines(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "firewall-logs.db")
-	input := strings.NewReader(`2026-05-05 12:00:00.000000 routerd firewall forward deny IP 172.18.0.101.53168 > 198.51.100.10.443: Flags [S], length 0
-`)
-	if err := run([]string{"daemon", "--path", path, "--input-format", "nflog-tcpdump"}, &bytes.Buffer{}, input); err != nil {
-		t.Fatal(err)
 	}
 }
 

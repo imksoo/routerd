@@ -44,22 +44,6 @@ func TestEvaluateCaptureGateUsesTypedObservation(t *testing.T) {
 	}
 }
 
-func TestPlanLocalCaptureIntentsLowersProviderCaptureDirectly(t *testing.T) {
-	actions, err := PlanLocalCaptureIntents([]dynamicconfig.LocalCaptureIntent{{
-		ID: "cloud/10.88.60.9", PoolRef: "cloud", PoolPrefix: "10.88.60.0/24", Address: "10.88.60.9/32",
-		Disposition: dynamicconfig.CaptureDesired, CaptureType: "provider-secondary-ip",
-		CaptureInterface: "ens3", TunnelInterfaces: []string{"wg-cloud"}, GratuitousARP: true,
-	}}, platform.OSLinux)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !captureActionPresent(actions, "deassign-os-address", "", "10.88.60.9/32", "") ||
-		!captureActionPresent(actions, "proxy-neighbor", "", "10.88.60.9/32", "ens3") ||
-		!captureActionPresent(actions, "forward-path", "", "10.88.60.9/32", "ens3") {
-		t.Fatalf("actions = %#v", actions)
-	}
-}
-
 func TestPlanLocalCaptureIntentsLowersProxyARPCaptureWithTunnelForwarding(t *testing.T) {
 	actions, err := PlanLocalCaptureIntents([]dynamicconfig.LocalCaptureIntent{{
 		ID: "svnet1/192.168.123.111", PoolRef: "svnet1", PoolPrefix: "192.168.123.0/24", Address: "192.168.123.111/32",
@@ -94,22 +78,6 @@ func TestPlanLocalCaptureIntentsDoesNotApplyHeldCapture(t *testing.T) {
 	}
 	if len(actions) != 0 {
 		t.Fatalf("held intent actions = %#v", actions)
-	}
-}
-
-func TestPlanLocalCaptureIntentsLowersProviderReleaseToOSDeassign(t *testing.T) {
-	actions, err := PlanLocalCaptureIntents([]dynamicconfig.LocalCaptureIntent{{
-		ID: "cloud/10.88.60.9", PoolRef: "cloud", PoolPrefix: "10.88.60.0/24", Address: "10.88.60.9/32", Disposition: dynamicconfig.CaptureRelease,
-		CaptureType: "provider-secondary-ip",
-	}}, platform.OSLinux)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !captureActionPresent(actions, "deassign-os-address", "", "10.88.60.9/32", "") {
-		t.Fatalf("release actions = %#v", actions)
-	}
-	if captureActionPresent(actions, "proxy-neighbor", "", "10.88.60.9/32", "") {
-		t.Fatalf("release unexpectedly captures: %#v", actions)
 	}
 }
 

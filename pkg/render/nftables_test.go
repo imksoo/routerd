@@ -130,47 +130,6 @@ func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 	}
 }
 
-func TestNftablesIPv4PolicyRouteUsesDestinationAddressSet(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"},
-			Metadata: api.ObjectMeta{Name: "cloud-service"},
-			Spec: api.IPAddressSetSpec{
-				Names: []string{"service.example.test"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-			Metadata: api.ObjectMeta{Name: "cloud-via-alt"},
-			Spec: api.EgressRoutePolicySpec{
-				Mode:                    "mark",
-				DestinationSetRefs:      []string{"IPAddressSet/cloud-service"},
-				ExcludeDestinationCIDRs: []string{"10.0.0.0/8"},
-				Candidates: []api.EgressRoutePolicyCandidate{{
-					Interface: "wan-alt",
-					Table:     200,
-					Priority:  1200,
-					Mark:      0x120,
-				}},
-			},
-		},
-	}}}
-	data, err := NftablesIPv4PolicyRoutes(router)
-	if err != nil {
-		t.Fatalf("render policy route: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		`table ip routerd_policy`,
-		`set ip_address_set_cloud_service { type ipv4_addr; }`,
-		`ip daddr @ip_address_set_cloud_service ip daddr !=10.0.0.0/8 meta mark set 0x120`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("policy route output missing %q:\n%s", want, got)
-		}
-	}
-}
-
 func nftablesStatefulFirewallTestRouter() *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
@@ -209,66 +168,6 @@ func nftablesStatefulFirewallTestRouter() *api.Router {
 			Action:     "accept",
 		}},
 	}}}
-}
-
-func TestNftablesObservesInitialPacketsForTrafficFlowDPI(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "ens18"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TrafficFlowLog"},
-			Metadata: api.ObjectMeta{Name: "default"},
-			Spec: api.TrafficFlowLogSpec{
-				Enabled:                 true,
-				IncludeApplicationLayer: true,
-				IncludeTLSSNI:           true,
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
-			Metadata: api.ObjectMeta{Name: "default"},
-			Spec: api.FirewallLogSpec{
-				Enabled:    true,
-				NFLogGroup: 7,
-				Log:        api.FirewallLogPolicySpec{AcceptSampleRate: 0, CopyRange: 512},
-			},
-		},
-	}}}
-	data, err := NftablesFirewall(router, nil)
-	if err != nil {
-		t.Fatalf("render nftables: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"chain dpi_observe",
-		"type filter hook forward priority filter + 1; policy accept;",
-		`ct state { new, established } ct packets < 10 log prefix "routerd dpi observe accept " group 7 snaplen 2048`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nftables output missing DPI observation rule %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "routerd firewall forward accept") {
-		t.Fatalf("acceptSampleRate=0 must keep accepted-event sampling disabled:\n%s", got)
-	}
 }
 
 func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {

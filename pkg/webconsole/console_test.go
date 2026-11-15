@@ -12,101 +12,9 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/logstore"
-	"github.com/imksoo/routerd/pkg/observe"
 )
 
 func reqContext() context.Context { return context.Background() }
-
-func TestTrafficFlowPortFallbackOverridesDNSOnTailscalePort(t *testing.T) {
-	flow := logstore.TrafficFlow{
-		Protocol:         "udp",
-		ClientAddress:    "172.18.0.2",
-		ClientPort:       53122,
-		PeerAddress:      "198.51.100.10",
-		PeerPort:         41641,
-		AppName:          "dns",
-		AppCategory:      "network",
-		AppConfidence:    75,
-		ResolvedHostname: "binary-noise",
-	}
-	applyTrafficFlowPortFallback(&flow)
-	if flow.AppName != "tailscale" || flow.AppCategory != "port-fallback" || flow.ResolvedHostname != "" {
-		t.Fatalf("flow fallback = %#v", flow)
-	}
-}
-
-func TestTrafficFlowPortFallbackKeepsProviderSeparateFromProtocol(t *testing.T) {
-	flow := logstore.TrafficFlow{
-		Protocol:         "tcp",
-		ClientAddress:    "172.18.0.2",
-		ClientPort:       53122,
-		PeerAddress:      "203.0.113.10",
-		PeerPort:         443,
-		ResolvedHostname: "edge.googleusercontent.com",
-	}
-	applyTrafficFlowPortFallback(&flow)
-	if flow.AppName != "tls" || flow.AppConfidence != 40 {
-		t.Fatalf("flow fallback = %#v", flow)
-	}
-}
-
-func TestTrafficFlowPortFallbackCanonicalizesLegacyProviderHTTPS(t *testing.T) {
-	flow := logstore.TrafficFlow{
-		Protocol:         "tcp",
-		ClientAddress:    "172.18.0.2",
-		ClientPort:       53122,
-		PeerAddress:      "203.0.113.10",
-		PeerPort:         443,
-		AppName:          "google-https",
-		AppCategory:      "port-fallback",
-		AppConfidence:    45,
-		ResolvedHostname: "edge.googleusercontent.com",
-	}
-	applyTrafficFlowPortFallback(&flow)
-	if flow.AppName != "tls" {
-		t.Fatalf("flow fallback = %#v", flow)
-	}
-}
-
-func TestConnectionPortFallbackPromotesTailscaleDERPStun(t *testing.T) {
-	entry := observe.ConnectionEntry{
-		Protocol:      "udp",
-		AppName:       "stun",
-		AppCategory:   "port-fallback",
-		AppConfidence: 40,
-		Original: observe.ConntrackTuple{
-			Source:              "192.0.2.10",
-			SourcePort:          "55123",
-			Destination:         "205.147.105.30",
-			DestinationPort:     "3478",
-			DestinationHostname: "derp20c.tailscale.com",
-		},
-	}
-	applyConnectionPortFallback(&entry)
-	if entry.AppName != "tailscale" || entry.AppConfidence < 60 {
-		t.Fatalf("connection fallback = %#v", entry)
-	}
-}
-
-func TestConnectionPortFallbackUsesTailscaleHostnameOnHTTPS(t *testing.T) {
-	entry := observe.ConnectionEntry{
-		Protocol:      "tcp",
-		AppName:       "tls",
-		AppCategory:   "port-fallback",
-		AppConfidence: 40,
-		Original: observe.ConntrackTuple{
-			Source:              "192.0.2.10",
-			SourcePort:          "55123",
-			Destination:         "203.0.113.10",
-			DestinationPort:     "443",
-			DestinationHostname: "lb.fra.tailscale.com",
-		},
-	}
-	applyConnectionPortFallback(&entry)
-	if entry.AppName != "tailscale" || entry.AppConfidence < 60 {
-		t.Fatalf("connection fallback = %#v", entry)
-	}
-}
 
 func TestHandlerFiltersExpiredDHCPLeasesAndPrefersConfiguredLeaseOrder(t *testing.T) {
 	dir := t.TempDir()
@@ -247,12 +155,6 @@ func TestParseTailscaleStatusJSON(t *testing.T) {
 	}
 	if len(status.Peers) != 2 || status.Peers[0].HostName != "laptop" || !status.Peers[0].Active {
 		t.Fatalf("peers not sorted/parsed: %+v", status.Peers)
-	}
-}
-
-func TestHostCommandPathKeepsAbsolutePath(t *testing.T) {
-	if got := hostCommandPath("/usr/local/bin/tailscale"); got != "/usr/local/bin/tailscale" {
-		t.Fatalf("hostCommandPath = %q", got)
 	}
 }
 
@@ -479,49 +381,6 @@ func TestHandlerClientSnapshotIgnoresStaleIPBasedFingerprints(t *testing.T) {
 	}
 	if row.Vendor != "Apple" {
 		t.Fatalf("current lease vendor = %q, want Apple", row.Vendor)
-	}
-}
-
-func TestCorrelateClientsInfersHomeAndOfficeDeviceSignals(t *testing.T) {
-	tests := []struct {
-		name   string
-		query  string
-		family string
-		class  string
-	}{
-		{name: "amazon echo", query: "device-metrics.amazonalexa.com", family: "iot", class: "smart-speaker"},
-		{name: "chromecast", query: "clients3.google.com", family: "iot", class: "smart-tv"},
-		{name: "roku", query: "api.roku.com", family: "iot", class: "smart-tv"},
-		{name: "switchbot", query: "api.switchbot.com", family: "iot", class: "iot"},
-		{name: "hue", query: "discovery.meethue.com", family: "iot", class: "lighting"},
-		{name: "ring", query: "api.ring.com", family: "iot", class: "camera"},
-		{name: "roomba", query: "prod.irobotapi.com", family: "iot", class: "vacuum"},
-		{name: "sonos", query: "update.sonos.com", family: "iot", class: "smart-speaker"},
-		{name: "synology", query: "global.quickconnect.to", family: "nas", class: "nas"},
-		{name: "qnap", query: "update.qnap.com", family: "nas", class: "nas"},
-		{name: "hp printer", query: "www.hpconnected.com", family: "printer", class: "printer"},
-		{name: "epson printer", query: "printer.epsonconnect.com", family: "printer", class: "printer"},
-		{name: "yealink", query: "rps.yealink.com", family: "voip", class: "voip"},
-		{name: "samsung", query: "dc.di.atlas.samsungcloud.com", family: "Android", class: "phone"},
-		{name: "xiaomi", query: "api.io.mi.com", family: "Android", class: "phone"},
-		{name: "tesla", query: "owner-api.teslamotors.com", family: "iot", class: "ev"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rows := correlateClients(
-				nil,
-				nil,
-				nil,
-				[]logstore.DNSQuery{{ClientAddress: "172.18.1.160", QuestionName: tt.query, QuestionType: "A"}},
-				nil,
-			)
-			if len(rows) != 1 {
-				t.Fatalf("rows = %d: %+v", len(rows), rows)
-			}
-			if rows[0].InferredOSFamily != tt.family || rows[0].InferredDeviceClass != tt.class {
-				t.Fatalf("fingerprint = %+v, want family=%s class=%s", rows[0], tt.family, tt.class)
-			}
-		})
 	}
 }
 

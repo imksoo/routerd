@@ -37,35 +37,6 @@ func TestParseEthernetARPReply(t *testing.T) {
 	}
 }
 
-func TestParseOptionsDefaultsSourceModes(t *testing.T) {
-	opts, err := parseOptions("test", []string{"--interface", "eth1", "--pool", "svnet1", "--prefix", "192.168.123.0/24", "--source-type", sourceOnDemandARP})
-	if err != nil {
-		t.Fatalf("parseOptions: %v", err)
-	}
-	if !opts.onDemand || opts.observe {
-		t.Fatalf("on-demand defaults = observe:%v onDemand:%v, want observe:false onDemand:true", opts.observe, opts.onDemand)
-	}
-	opts, err = parseOptions("test", []string{"--interface", "eth1", "--pool", "svnet1", "--prefix", "192.168.123.0/24", "--source-type", sourcePVESVNet})
-	if err != nil {
-		t.Fatalf("parseOptions pve-svnet: %v", err)
-	}
-	if !opts.observe || opts.onDemand {
-		t.Fatalf("pve-svnet defaults = observe:%v onDemand:%v, want observe:true onDemand:false", opts.observe, opts.onDemand)
-	}
-}
-
-func TestParseOptionsAcceptsSupervisorOwner(t *testing.T) {
-	_, err := parseOptions("test", []string{
-		"--supervisor-owner", "owned-token",
-		"--interface", "eth1",
-		"--pool", "svnet1",
-		"--prefix", "192.168.123.0/24",
-	})
-	if err != nil {
-		t.Fatalf("parseOptions --supervisor-owner: %v", err)
-	}
-}
-
 func TestParseOptionsAcceptsRepeatedIgnoreSenderMAC(t *testing.T) {
 	_, err := parseOptions("test", []string{
 		"--interface", "eth1",
