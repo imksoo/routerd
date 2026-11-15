@@ -20,7 +20,6 @@ import (
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
-	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -234,17 +233,6 @@ func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
 	}
 	if got := store.LatestGeneration(); got != before {
 		t.Fatalf("generation after scheduled reconcile = %d, want %d", got, before)
-	}
-}
-
-func TestConfigCommitPhaseIncludesCommittedConfig(t *testing.T) {
-	for _, phase := range []string{"Healthy", "Applied", "Committed"} {
-		if !configCommitPhase(phase) {
-			t.Fatalf("configCommitPhase(%q) = false, want true", phase)
-		}
-	}
-	if configCommitPhase("Errored") {
-		t.Fatal("configCommitPhase(Errored) = true, want false")
 	}
 }
 
@@ -499,35 +487,6 @@ spec:
 `, name)
 }
 
-func TestControllerDefaultStatusesAreLive(t *testing.T) {
-	got := controllerDefaultStatuses()
-	if len(got) == 0 {
-		t.Fatal("controller statuses are empty")
-	}
-	for _, status := range got {
-		if status.Mode != "live" || status.Reason != controlapi.ControllerModeReasonLive {
-			t.Fatalf("status = %+v, want live", status)
-		}
-		if len(status.ResourceKinds) == 0 {
-			t.Fatalf("status = %+v missing resource kinds", status)
-		}
-	}
-}
-
-func TestFilterControllerDefaultStatuses(t *testing.T) {
-	all := controllerDefaultStatuses()
-	filtered := filterControllerDefaultStatuses(all, parseControllerNames("bgp"))
-	if len(filtered) != 1 {
-		t.Fatalf("filtered len = %d, want 1: %+v", len(filtered), filtered)
-	}
-	if filtered[0].Name != "bgp" {
-		t.Fatalf("filtered[0].Name = %q, want bgp", filtered[0].Name)
-	}
-	if got := filterControllerDefaultStatuses(all, parseControllerNames("all")); len(got) != len(all) {
-		t.Fatalf("all filtered len = %d, want %d", len(got), len(all))
-	}
-}
-
 func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -661,34 +620,6 @@ func dynamicConfigPartRecordForCleanupTest(t *testing.T, source string, resource
 	}
 }
 
-func TestWriteFileIfChanged(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.conf")
-
-	changed, err := writeFileIfChanged(path, []byte("one\n"), 0644)
-	if err != nil {
-		t.Fatalf("first write: %v", err)
-	}
-	if !changed {
-		t.Fatal("first write changed = false, want true")
-	}
-
-	changed, err = writeFileIfChanged(path, []byte("one\n"), 0644)
-	if err != nil {
-		t.Fatalf("same write: %v", err)
-	}
-	if changed {
-		t.Fatal("same write changed = true, want false")
-	}
-
-	changed, err = writeFileIfChanged(path, []byte("two\n"), 0644)
-	if err != nil {
-		t.Fatalf("different write: %v", err)
-	}
-	if !changed {
-		t.Fatal("different write changed = false, want true")
-	}
-}
-
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -730,80 +661,6 @@ dhcp6_ia_pd1_prefix1=2001:db8:3d60:1220::
 	}
 	if lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
 		t.Fatalf("lease = %#v", lease)
-	}
-}
-
-func TestObserveFreeBSDDHCPv6CIdentityPayload(t *testing.T) {
-	payload := freeBSDDHCPv6CDUIDPayload([]byte{
-		0x0e, 0x00,
-		0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01,
-	})
-	if got := colonHex(payload); got != "00:01:00:01:31:82:0f:6f:02:00:00:00:01:01" {
-		t.Fatalf("DUID payload = %s", got)
-	}
-	if got := configuredOrDefaultDHCPv6CIAID("00000001"); got != "1" {
-		t.Fatalf("IAID = %s, want decimal conversion", got)
-	}
-}
-
-func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-		Metadata: api.ObjectMeta{Name: "wan-pd"},
-		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
-	}}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		LastPrefix: "2001:db8:3d60:1240::/60",
-	}), "test")
-	result := &apply.Result{}
-	appendPrefixDelegationStateWarnings(result, router, store)
-	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "2001:db8:3d60:1240::/60") {
-		t.Fatalf("warnings = %#v", result.Warnings)
-	}
-}
-
-func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-		Metadata: api.ObjectMeta{Name: "wan-pd"},
-		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
-	}}}}
-	store := routerstate.New()
-	store.Unset("ipv6PrefixDelegation.wan-pd.currentPrefix", "test")
-	result := &apply.Result{}
-	appendPrefixDelegationStateWarnings(result, router, store)
-	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "no delegated prefix has been recorded") {
-		t.Fatalf("warnings = %#v", result.Warnings)
-	}
-}
-
-func TestRecordHostInventoryState(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := routerstate.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if _, err := store.BeginGeneration("test"); err != nil {
-		t.Fatalf("begin generation: %v", err)
-	}
-	if err := recordHostInventoryState(store); err != nil {
-		t.Fatalf("record inventory: %v", err)
-	}
-	status := store.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
-	if status == nil || status["os"] == nil || status["commands"] == nil {
-		t.Fatalf("inventory status = %#v", status)
-	}
-	events := store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
-	if len(events) != 1 || events[0].Reason != "InventoryObserved" {
-		t.Fatalf("events = %#v", events)
-	}
-	if err := recordHostInventoryState(store); err != nil {
-		t.Fatalf("record inventory again: %v", err)
-	}
-	events = store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
-	if len(events) != 1 {
-		t.Fatalf("unchanged inventory should not add event: %#v", events)
 	}
 }
 

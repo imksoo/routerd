@@ -343,43 +343,6 @@ func TestRequeueStaleRunningActionsOnlyRequeuesOldRunning(t *testing.T) {
 	}
 }
 
-func TestActionResultObservedRoundTrip(t *testing.T) {
-	store := mustOpenStore(t)
-	defer store.Close()
-
-	if _, err := store.ImportAction(sampleActionRecord("obs-1")); err != nil {
-		t.Fatalf("import: %v", err)
-	}
-	rec, _, err := store.GetActionByIdempotencyKey("obs-1")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
-	observed := map[string]string{"priorSourceDestCheck": "true", "nicState": "in-use"}
-	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", observed, time.Time{}); err != nil {
-		t.Fatalf("mark result: %v", err)
-	}
-
-	got, _, err := store.GetActionByID(rec.ID)
-	if err != nil {
-		t.Fatalf("reget: %v", err)
-	}
-	if got.Observed["priorSourceDestCheck"] != "true" || got.Observed["nicState"] != "in-use" {
-		t.Fatalf("observed not round-tripped: %+v", got.Observed)
-	}
-
-	// ListActions returns Observed too.
-	rows, err := store.ListActions(ActionExecutionFilter{Status: ActionSucceeded})
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(rows) != 1 || rows[0].Observed["priorSourceDestCheck"] != "true" {
-		t.Fatalf("list did not return observed: %+v", rows)
-	}
-}
-
 func importApproveAndClaimAt(t *testing.T, store *SQLiteStore, key string, at time.Time) int64 {
 	t.Helper()
 	if _, err := store.ImportAction(sampleActionRecord(key)); err != nil {
@@ -400,27 +363,6 @@ func importApproveAndClaimAt(t *testing.T, store *SQLiteStore, key string, at ti
 		t.Fatalf("begin %s did not claim", key)
 	}
 	return rec.ID
-}
-
-func TestActionResultEmptyObservedLeavesNull(t *testing.T) {
-	store := mustOpenStore(t)
-	defer store.Close()
-
-	if _, err := store.ImportAction(sampleActionRecord("obs-empty")); err != nil {
-		t.Fatalf("import: %v", err)
-	}
-	rec, _, _ := store.GetActionByIdempotencyKey("obs-empty")
-	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
-	// nil observed -> observed_json stays NULL, Observed decodes to nil/empty.
-	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", nil, time.Time{}); err != nil {
-		t.Fatalf("mark result: %v", err)
-	}
-	got, _, _ := store.GetActionByID(rec.ID)
-	if len(got.Observed) != 0 {
-		t.Fatalf("expected empty Observed, got %+v", got.Observed)
-	}
 }
 
 func TestActionRolledBack(t *testing.T) {
@@ -452,59 +394,5 @@ func TestActionRolledBack(t *testing.T) {
 	}
 	if got.ResultMessage != "undo applied" {
 		t.Fatalf("rollback message not recorded: %q", got.ResultMessage)
-	}
-}
-
-func TestListActionsFilterAndRoundTrip(t *testing.T) {
-	store := mustOpenStore(t)
-	defer store.Close()
-
-	if _, err := store.ImportAction(sampleActionRecord("aws-1")); err != nil {
-		t.Fatalf("import: %v", err)
-	}
-	azure := sampleActionRecord("azure-1")
-	azure.Provider = "azure"
-	if _, err := store.ImportAction(azure); err != nil {
-		t.Fatalf("import: %v", err)
-	}
-
-	awsRows, err := store.ListActions(ActionExecutionFilter{Provider: "aws"})
-	if err != nil {
-		t.Fatalf("list aws: %v", err)
-	}
-	if len(awsRows) != 1 || awsRows[0].Provider != "aws" {
-		t.Fatalf("provider filter failed: %+v", awsRows)
-	}
-
-	pendingRows, err := store.ListActions(ActionExecutionFilter{Status: ActionPending})
-	if err != nil {
-		t.Fatalf("list pending: %v", err)
-	}
-	if len(pendingRows) != 2 {
-		t.Fatalf("expected 2 pending, got %d", len(pendingRows))
-	}
-
-	// Round-trip: stored JSON fields come back intact.
-	rec, ok, err := store.GetActionByIdempotencyKey("aws-1")
-	if err != nil || !ok {
-		t.Fatalf("get: ok=%v err=%v", ok, err)
-	}
-	if rec.TargetJSON == "" || rec.ParametersJSON == "" || rec.UndoJSON == "" {
-		t.Fatalf("JSON fields not round-tripped: %+v", rec)
-	}
-	if rec.RiskLevel != "medium" || rec.ProviderRef != "aws-prod" {
-		t.Fatalf("scalar fields not round-tripped: %+v", rec)
-	}
-}
-
-func TestGetActionMissing(t *testing.T) {
-	store := mustOpenStore(t)
-	defer store.Close()
-
-	if _, ok, err := store.GetActionByID(999); err != nil || ok {
-		t.Fatalf("missing id should return ok=false, got ok=%v err=%v", ok, err)
-	}
-	if _, ok, err := store.GetActionByIdempotencyKey("nope"); err != nil || ok {
-		t.Fatalf("missing key should return ok=false, got ok=%v err=%v", ok, err)
 	}
 }

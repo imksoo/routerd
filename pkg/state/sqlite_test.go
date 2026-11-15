@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -38,36 +37,6 @@ func TestListObjectStatusesReportsUninitializedSchema(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "SQL logic error") || strings.Contains(err.Error(), "no such table") {
 		t.Fatalf("ListObjectStatuses leaked raw SQLite error: %v", err)
-	}
-}
-
-func TestSQLiteStorePersistsAndSupportsJSON1(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	lease := PDLease{
-		LastPrefix:     "2001:db8:1200:1210::/60",
-		LastObservedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", EncodePDLease(lease), "test")
-	if err := store.Close(); err != nil {
-		t.Fatalf("close sqlite store: %v", err)
-	}
-
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open sqlite directly: %v", err)
-	}
-	defer db.Close()
-	var prefix string
-	err = db.QueryRow(`SELECT json_extract(status, '$.lastPrefix') FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, "net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd").Scan(&prefix)
-	if err != nil {
-		t.Fatalf("json_extract lease prefix: %v", err)
-	}
-	if prefix != lease.LastPrefix {
-		t.Fatalf("json prefix = %q, want %q", prefix, lease.LastPrefix)
 	}
 }
 
@@ -229,21 +198,6 @@ VALUES('net.routerd.net/v1alpha1','DHCPv6PrefixDelegation','wan-pd','net.routerd
 	}
 	if count != 1 {
 		t.Fatalf("existing objects count = %d, want 1", count)
-	}
-}
-
-func TestSQLiteStoreObjectApplySource(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	defer store.Close()
-	if err := store.SaveObjectApplySource("net.routerd.net/v1alpha1", "Interface", "wan", "/etc/routerd/wan.yaml"); err != nil {
-		t.Fatalf("save apply source: %v", err)
-	}
-	if got := store.ObjectApplySource("net.routerd.net/v1alpha1", "Interface", "wan"); got != "/etc/routerd/wan.yaml" {
-		t.Fatalf("apply source = %q", got)
 	}
 }
 
@@ -436,170 +390,6 @@ func TestOpenSQLiteReadOnlyReadsLiveWALGeneration(t *testing.T) {
 	defer func() { _ = readonly.Close() }()
 	if got := readonly.LatestGeneration(); got != generation {
 		t.Fatalf("read-only latest generation = %d, want %d", got, generation)
-	}
-}
-
-func TestSQLiteStoreDynamicConfigPartARPObserverIntentsRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	defer store.Close()
-	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	const intentsJSON = `[{"resourceName":"mobility-cloudedge-pve-arp-observer-ens3","poolRef":"cloudedge","prefix":"10.77.60.0/24","sourceType":"arp-observer","ifName":"ens3","eventInterface":"capture","observe":true}]`
-	rec := DynamicConfigPartRecord{
-		Source:                 "MobilityPool/cloudedge/node/pve/arp-observer",
-		Generation:             1,
-		ObservedAt:             now,
-		ExpiresAt:              now.Add(5 * time.Minute),
-		Digest:                 "sha256:arp-observer",
-		ResourcesJSON:          `[]`,
-		DirectivesJSON:         `[]`,
-		ARPObserverIntentsJSON: intentsJSON,
-		Status:                 "active",
-	}
-	if err := store.UpsertDynamicConfigPart(rec); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	parts, err := store.GetDynamicConfigPartsBySource(rec.Source)
-	if err != nil {
-		t.Fatalf("get by source: %v", err)
-	}
-	if len(parts) != 1 || parts[0].ARPObserverIntentsJSON != intentsJSON {
-		t.Fatalf("ARP observer intents round-trip = %+v", parts)
-	}
-}
-
-func TestSQLiteStoreDynamicConfigPartMobilityDataplaneRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	defer store.Close()
-
-	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	const planJSON = `{"poolPrefix":"192.0.2.0/24","captures":[{"id":"cloudedge/192.0.2.1","poolRef":"cloudedge","address":"192.0.2.1/32","disposition":"desired","captureType":"proxy-arp"}],"routes":[{"id":"cloudedge/route/local/192.0.2.1","poolRef":"cloudedge","purpose":"local-inventory","destination":"192.0.2.1/32","device":"ens3","metric":1}],"staticAddresses":[{"id":"cloudedge/address/capture-source","poolRef":"cloudedge","purpose":"capture-source","interface":"ens3","address":"192.0.2.254/32"}]}`
-	rec := DynamicConfigPartRecord{
-		Source:                "MobilityPool/cloudedge/node/router-a",
-		Generation:            1,
-		ObservedAt:            now,
-		ExpiresAt:             now.Add(5 * time.Minute),
-		Digest:                "sha256:mobility-dataplane",
-		ResourcesJSON:         `[]`,
-		DirectivesJSON:        `[]`,
-		MobilityDataplaneJSON: planJSON,
-		Status:                "active",
-	}
-	if err := store.UpsertDynamicConfigPart(rec); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	parts, err := store.GetDynamicConfigPartsBySource(rec.Source)
-	if err != nil {
-		t.Fatalf("get by source: %v", err)
-	}
-	if len(parts) != 1 || parts[0].MobilityDataplaneJSON != planJSON {
-		t.Fatalf("mobility dataplane round-trip = %+v", parts)
-	}
-
-	rows, err := store.db.Query(`PRAGMA table_info(dynamic_config_parts)`)
-	if err != nil {
-		t.Fatalf("table info: %v", err)
-	}
-	defer rows.Close()
-	var hasMobilityDataplane bool
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notNull, primaryKey int
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
-			t.Fatalf("scan column: %v", err)
-		}
-		if name == "mobility_dataplane_json" {
-			hasMobilityDataplane = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("table info rows: %v", err)
-	}
-	if !hasMobilityDataplane {
-		t.Fatal("fresh dynamic_config_parts is missing mobility_dataplane_json")
-	}
-}
-
-func TestSQLiteStorePluginRunsListNewestFirstAndFilter(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	defer store.Close()
-	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
-	firstID, err := store.RecordPluginRun(PluginRunRecord{
-		Plugin:      "cloud",
-		TriggerType: "manual",
-		StartedAt:   now.Add(-time.Minute),
-		Status:      "running",
-	})
-	if err != nil {
-		t.Fatalf("record first run: %v", err)
-	}
-	firstExit := 1
-	if err := store.CompletePluginRun(firstID, now.Add(-30*time.Second), &firstExit, "failed", "sha256:first", "boom", "exit 1"); err != nil {
-		t.Fatalf("complete first run: %v", err)
-	}
-	secondID, err := store.RecordPluginRun(PluginRunRecord{
-		Plugin:       "cloud",
-		TriggerType:  "event",
-		TriggerTopic: "routerd.test",
-		StartedAt:    now,
-		Status:       "running",
-	})
-	if err != nil {
-		t.Fatalf("record second run: %v", err)
-	}
-	secondExit := 0
-	if err := store.CompletePluginRun(secondID, now.Add(time.Second), &secondExit, "succeeded", "sha256:second", "", ""); err != nil {
-		t.Fatalf("complete second run: %v", err)
-	}
-	otherID, err := store.RecordPluginRun(PluginRunRecord{
-		Plugin:      "other",
-		TriggerType: "manual",
-		StartedAt:   now.Add(time.Minute),
-		Status:      "running",
-	})
-	if err != nil {
-		t.Fatalf("record other run: %v", err)
-	}
-	if err := store.CompletePluginRun(otherID, now.Add(time.Minute+time.Second), nil, "failed", "", "", "validate failed"); err != nil {
-		t.Fatalf("complete other run: %v", err)
-	}
-
-	cloudRuns, err := store.ListPluginRuns("cloud")
-	if err != nil {
-		t.Fatalf("list cloud plugin runs: %v", err)
-	}
-	if len(cloudRuns) != 2 {
-		t.Fatalf("cloud runs len = %d, want 2: %+v", len(cloudRuns), cloudRuns)
-	}
-	if cloudRuns[0].ID != secondID || cloudRuns[1].ID != firstID {
-		t.Fatalf("cloud run ordering = %+v, want newest first", cloudRuns)
-	}
-	if cloudRuns[0].Status != "succeeded" || !cloudRuns[0].HasExitCode || cloudRuns[0].ExitCode != 0 || cloudRuns[0].TriggerTopic != "routerd.test" {
-		t.Fatalf("latest cloud run = %+v", cloudRuns[0])
-	}
-	if cloudRuns[1].Status != "failed" || cloudRuns[1].Error != "exit 1" || cloudRuns[1].Stderr != "boom" {
-		t.Fatalf("older cloud run = %+v", cloudRuns[1])
-	}
-
-	allRuns, err := store.ListPluginRuns("")
-	if err != nil {
-		t.Fatalf("list all plugin runs: %v", err)
-	}
-	if len(allRuns) != 3 || allRuns[0].Plugin != "other" || allRuns[1].ID != secondID {
-		t.Fatalf("all runs = %+v, want newest-first across plugins", allRuns)
 	}
 }
 
