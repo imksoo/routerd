@@ -19,6 +19,12 @@ baking credentials into the ISO image.
 - The ability to set kernel parameters at boot (edit the GRUB entry or set
   the VM's kernel arguments from the hypervisor).
 
+## Fixed host keys
+
+Set `spec.sshHostKeys` to a list of `privateKey` values containing unencrypted Ed25519, RSA or ECDSA private keys. Only one key of each type is allowed. Routerd updates the corresponding `/etc/ssh/ssh_host_ed25519_key`, `ssh_host_rsa_key` or `ssh_host_ecdsa_key` and public key, checks the sshd configuration and reloads the service only when needed. Failures are reported and retried. Other key types are untouched; removing a setting does not erase installed keys. Omitting all keys preserves boot-time generation.
+
+Temporary keys are presented before application. Private keys are stored in configuration and generation history; restrict access to the configuration, config disk, state database and backups. WebConsole configuration views redact private keys.
+
 ## Enabling SSH
 
 ### Step 1 — place your public key on the config disk

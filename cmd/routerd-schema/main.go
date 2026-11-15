@@ -70,7 +70,8 @@ func configSchema() map[string]any {
 				"required":             []string{"resources"},
 				"additionalProperties": false,
 				"properties": map[string]any{
-					"reconcile": reflectedSchema(api.ApplyPolicySpec{}),
+					"reconcile":   reflectedSchema(api.ApplyPolicySpec{}),
+					"sshHostKeys": map[string]any{"type": "array", "items": reflectedSchema(api.SSHHostKeySpec{})},
 					"resources": map[string]any{
 						"type":  "array",
 						"items": resourceUnionSchema(),

@@ -1564,7 +1564,7 @@ func filterScheduledReconcileControllers(controllers []framework.Controller) []f
 
 func scheduledReconcileSkipsController(name string) bool {
 	switch name {
-	case "package", "kernel-module", "sysctl", "hostname", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
+	case "package", "kernel-module", "sysctl", "hostname", "ssh-host-key", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
 		// These controllers already run from the serve event loop with their own
 		// periodic cadence and status subscriptions. Running them again from
 		// --apply-interval makes the scheduled pass probe or rewrite host state
@@ -1633,6 +1633,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	// copying Runner: Runner owns synchronization and runtime state.
 	packages := PackageController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
+	sshHostKey := SSHHostKeyController{Router: r.currentRouter(), DryRun: opts.DryRunSysctl}
 	hostname := HostnameController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunSysctl}
 	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
@@ -1842,6 +1843,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: []bus.Subscription{{Topics: []string{"routerd.controller.bootstrap", "routerd.system.network_adoption.applied"}}}, PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
+		framework.FuncController{ControllerName: "ssh-host-key", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sshHostKey.Reconcile)},
 		framework.FuncController{ControllerName: "hostname", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(hostname.Reconcile)},
 		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment")), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()

@@ -226,6 +226,17 @@ func AtomicWriteFileWithOutcome(path string, data []byte) (replaced bool, err er
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return replaced, err
 	}
+	var secrets struct {
+		Spec struct {
+			SSHHostKeys []api.SSHHostKeySpec `yaml:"sshHostKeys"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(data, &secrets); err != nil {
+		return replaced, err
+	}
+	if len(secrets.Spec.SSHHostKeys) > 0 {
+		mode = 0600
+	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return replaced, err

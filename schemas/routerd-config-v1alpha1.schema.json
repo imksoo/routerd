@@ -13342,6 +13342,21 @@
             ]
           },
           "type": "array"
+        },
+        "sshHostKeys": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "privateKey": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "privateKey"
+            ],
+            "type": "object"
+          },
+          "type": "array"
         }
       },
       "required": [

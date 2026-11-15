@@ -16,6 +16,12 @@ routerd Live ISO 預設不執行 SSH 守護程式。預設態勢是封閉的。�
   或透過 `routerd.usb=` 指定）。
 - 在開機時設定核心參數的方式（編輯 GRUB 項目，或從虛擬化管理器設定 VM 的核心參數）。
 
+## 固定主機金鑰
+
+在 `spec.sshHostKeys` 清單中以 `privateKey` 指定未加密的 Ed25519、RSA 或 ECDSA 私鑰，每種類型最多一個。routerd 更新對應的 `/etc/ssh/ssh_host_ed25519_key`、`ssh_host_rsa_key` 或 `ssh_host_ecdsa_key` 及其公鑰，驗證 sshd 設定後只在需要時重新載入服務。失敗會回報並重試。未指定的金鑰不受影響；移除設定不會刪除已安裝的金鑰。全部省略時維持開機時產生金鑰的行為。
+
+套用前會暫時使用開機產生的金鑰。私鑰儲存在設定與版本歷史中；請限制設定檔、設定磁碟、狀態資料庫及備份的存取。WebConsole 設定畫面會遮蔽私鑰。
+
 ## 啟用 SSH
 
 ### 步驟 1 — 在 config 磁碟上放置公鑰
