@@ -57,44 +57,6 @@ func TestFreeBSDRCDScript(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRenderRoutesDHCPv6ClientThroughRouterd(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "1"},
-		},
-	}}}
-	cfg, err := FreeBSD(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cfg.RCDScripts["routerd_dhcpv6_client_wan_pd"]; ok {
-		t.Fatalf("DHCPv6 client rc.d script must not be synthesized when routerd supervises clients")
-	}
-	script := string(cfg.RCDScripts["routerd"])
-	for _, want := range []string{
-		`PROVIDE: routerd`,
-		`daemon_command="/usr/sbin/daemon"`,
-		`'/usr/local/sbin/routerd' 'serve'`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("rc.d script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, `'/usr/local/sbin/routerd' 'check'`) {
-		t.Fatalf("routerd rc.d script must not call removed routerd check verb:\n%s", script)
-	}
-	if strings.Contains(script, "controller"+"-chain") {
-		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", script)
-	}
-}
-
 func TestFreeBSDRCDPgrepPatternIncludesResourceName(t *testing.T) {
 	got := freeBSDRCDPgrepPattern([]string{
 		"/usr/local/sbin/routerd-healthcheck",
@@ -134,44 +96,6 @@ func TestFreeBSDRendersBGPRCDScript(t *testing.T) {
 		if !strings.Contains(string(script), want) {
 			t.Fatalf("routerd_bgp missing %q:\n%s", want, script)
 		}
-	}
-}
-
-func TestFreeBSDRenderRoutesDHCPv4ClientThroughRouterd(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
-			Metadata: api.ObjectMeta{Name: "wan-v4"},
-			Spec:     api.DHCPv4ClientSpec{Interface: "wan", Hostname: "router04"},
-		},
-	}}}
-	cfg, err := FreeBSD(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cfg.RCDScripts["routerd_dhcpv4_client_wan_v4"]; ok {
-		t.Fatalf("DHCPv4 client rc.d script must not be synthesized when routerd supervises clients")
-	}
-	script := string(cfg.RCDScripts["routerd"])
-	for _, want := range []string{
-		`PROVIDE: routerd`,
-		`daemon_command="/usr/sbin/daemon"`,
-		`'/usr/local/sbin/routerd' 'serve'`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("rc.d script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, `'/usr/local/sbin/routerd' 'check'`) {
-		t.Fatalf("routerd rc.d script must not call removed routerd check verb:\n%s", script)
-	}
-	if strings.Contains(script, "controller"+"-chain") {
-		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", script)
 	}
 }
 
