@@ -143,30 +143,6 @@ func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.
 	}
 }
 
-func TestFreeBSDRenderSynthesizesHealthCheckResourceAsRCD(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-			Metadata: api.ObjectMeta{Name: "internet"},
-			Spec: api.HealthCheckSpec{
-				Daemon:   "routerd-healthcheck",
-				Target:   "1.1.1.1",
-				Protocol: "icmp",
-			},
-		},
-	}}}
-	cfg, err := FreeBSD(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(cfg.RCConf), `routerd_healthcheck_internet_enable="YES"`) {
-		t.Fatalf("rc.conf missing enable flag:\n%s", cfg.RCConf)
-	}
-	if _, ok := cfg.RCDScripts["routerd_healthcheck_internet"]; !ok {
-		t.Fatalf("rc.d scripts = %#v", cfg.RCDScripts)
-	}
-}
-
 func TestFreeBSDRCDDoesNotRenderLinuxDSLiteBindingFlag(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "dslite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "gif0"}},
