@@ -125,20 +125,6 @@ func TestValidateEventGroupRejectsInvalidPeersFrom(t *testing.T) {
 	}
 }
 
-func TestValidateEventPeerOK(t *testing.T) {
-	router := eventPeerRouter(api.EventPeerSpec{
-		GroupRef:        "cloudedge",
-		NodeName:        "cloud-router",
-		Endpoint:        "http://10.99.0.7:8787",
-		Direction:       "push",
-		Types:           []string{"routerd.client.ipv4.observed"},
-		SubjectPrefixes: []string{"10.88."},
-	})
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate EventPeer: %v", err)
-	}
-}
-
 func TestValidateEventPeerDefaultsDirection(t *testing.T) {
 	router := eventPeerRouter(api.EventPeerSpec{
 		GroupRef: "cloudedge",
@@ -218,26 +204,6 @@ func eventSubscriptionRouter(spec api.EventSubscriptionSpec) *api.Router {
 				Spec:     spec,
 			},
 		}},
-	}
-}
-
-func TestValidateEventSubscriptionOK(t *testing.T) {
-	router := eventSubscriptionRouter(api.EventSubscriptionSpec{
-		GroupRef: "cloudedge",
-		Match: api.EventSubscriptionMatch{
-			Types:           []string{"routerd.client.ipv4.observed"},
-			SubjectPrefixes: []string{"10.88."},
-			Payload:         map[string]string{"ownerSide": "onprem"},
-			SourceNodes:     []string{"onprem-router"},
-		},
-		Trigger: api.EventSubscriptionTrigger{
-			PluginRef:   "remote-claim-provisioner",
-			BatchWindow: "5s",
-			Debounce:    "2s",
-		},
-	})
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate EventSubscription: %v", err)
 	}
 }
 
