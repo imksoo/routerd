@@ -122,6 +122,26 @@ jobs:
       - name: Compile FreeBSD binaries and test packages
         run: make check-freebsd-cross-compile
 
+  go-test:
+    needs: detect-website-changes
+    if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go tests
+        run: go test ./...
+
   schema:
     needs: detect-website-changes
     if: ${{ needs.detect-website-changes.outputs.backend == 'true' }}
