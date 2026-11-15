@@ -43,7 +43,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	var errors []string
 	var err error
 	var resources []routerstate.ObjectStatus
-	if !opts.SkipResources {
+	if !opts.SkipResources || !opts.SkipInterfaces {
 		resources, err = h.resourceStatuses()
 		if err != nil {
 			errors = append(errors, err.Error())
@@ -192,6 +192,9 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	var interfaces []InterfaceSummary
 	if !opts.SkipInterfaces {
 		interfaces = h.interfaceSummaries(resources)
+	}
+	if opts.SkipResources {
+		resources = nil
 	}
 	systemUsage := h.readSystemUsage()
 	result = resultWithLatestGeneration(result, h.opts.Store)
