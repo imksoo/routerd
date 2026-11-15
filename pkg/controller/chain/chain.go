@@ -2193,12 +2193,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
+			if err := r.saveWhenFalseStatuses(store); err != nil {
 				return false, err
 			}
 			current := bfd
-			current.Router = effective
+			current.Router = r.effectiveRouter(store)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.currentRouter()), Subs: bgpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
