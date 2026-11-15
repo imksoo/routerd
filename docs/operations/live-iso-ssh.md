@@ -23,7 +23,7 @@ baking credentials into the ISO image.
 
 Set `spec.sshHostKeys` to a list of `privateKey` values containing unencrypted Ed25519, RSA or ECDSA private keys. Only one key of each type is allowed. Routerd updates the corresponding `/etc/ssh/ssh_host_ed25519_key`, `ssh_host_rsa_key` or `ssh_host_ecdsa_key` and public key, checks the sshd configuration and reloads the service only when needed. Failures are reported and retried. Other key types are untouched; removing a setting does not erase installed keys. Omitting all keys preserves boot-time generation.
 
-Temporary keys are presented before application. Private keys are stored in configuration and generation history; restrict access to the configuration, config disk, state database and backups. WebConsole configuration views redact private keys.
+Temporary keys are presented before application. Private keys are stored in configuration and generation history. The operator must secure the input file and config disk before routerd reads them and restrict access to backups. Before storing a history entry containing host keys, routerd changes the state database and existing WAL and related files to at most mode 0600. WebConsole configuration views redact private keys.
 
 ## Enabling SSH
 

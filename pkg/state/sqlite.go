@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -950,6 +951,9 @@ func (s *SQLiteStore) BeginGenerationIfChanged(configHash, configYAML string) (i
 	if s.closed {
 		return 0, false, nil
 	}
+	if err := s.protectSSHHostKeyHistory(configYAML); err != nil {
+		return 0, false, err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`
 INSERT INTO generations(started_at,warnings,config_hash,config_yaml)
@@ -1009,8 +1013,52 @@ func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string
 	if generation == 0 {
 		return nil
 	}
+	if err := s.protectSSHHostKeyHistory(configYAML); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`UPDATE generations SET config_yaml = ? WHERE generation = ?`, configYAML, generation)
 	return err
+}
+
+// protectSSHHostKeyHistory runs before either config_yaml write. SQLite uses
+// the database mode when creating subsequent journal and WAL files.
+func (s *SQLiteStore) protectSSHHostKeyHistory(configYAML string) error {
+	var config struct {
+		Spec struct {
+			SSHHostKeys []struct {
+				PrivateKey string `yaml:"privateKey"`
+			} `yaml:"sshHostKeys"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(configYAML), &config); err != nil {
+		return errors.New("cannot inspect configuration for SSH host keys")
+	}
+	if len(config.Spec.SSHHostKeys) == 0 {
+		return nil
+	}
+	var dbPath string
+	if err := s.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&dbPath); err != nil {
+		return fmt.Errorf("identify state database: %w", err)
+	}
+	if dbPath == "" {
+		return errors.New("cannot protect an unnamed state database")
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal", ""} {
+		path := dbPath + suffix
+		info, err := os.Stat(path)
+		if err != nil {
+			if suffix != "" && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("protect state file %s: %w", path, err)
+		}
+		if info.Mode().Perm()&0077 != 0 {
+			if err := os.Chmod(path, info.Mode().Perm()&0600); err != nil {
+				return fmt.Errorf("protect state file %s: %w", path, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings []string) error {
