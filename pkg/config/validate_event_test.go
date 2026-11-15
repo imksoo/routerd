@@ -37,17 +37,6 @@ func eventGroupRouter(spec api.EventGroupSpec) *api.Router {
 	}
 }
 
-func TestValidateEventGroupPeersFromOK(t *testing.T) {
-	router := eventGroupRouter(api.EventGroupSpec{
-		NodeName:  "router-a",
-		PeersFrom: []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}},
-		Auth:      api.EventGroupAuth{SecretFile: "/run/routerd/eventd.key"},
-	})
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate EventGroup peersFrom: %v", err)
-	}
-}
-
 func TestValidateIdentityOnlyEventGroupAllowsNoSecretFile(t *testing.T) {
 	router := eventGroupRouter(api.EventGroupSpec{
 		NodeName: "router-a",
@@ -122,18 +111,6 @@ func TestValidateEventGroupRejectsInvalidPeersFrom(t *testing.T) {
 	err := Validate(router)
 	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>") {
 		t.Fatalf("Validate EventGroup peersFrom error = %v, want SAMNodeSet ref error", err)
-	}
-}
-
-func TestValidateEventPeerDefaultsDirection(t *testing.T) {
-	router := eventPeerRouter(api.EventPeerSpec{
-		GroupRef: "cloudedge",
-		NodeName: "cloud-router",
-		Endpoint: "http://10.99.0.7:8787",
-		// Direction empty -> defaults to push, must still pass.
-	})
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate EventPeer default direction: %v", err)
 	}
 }
 

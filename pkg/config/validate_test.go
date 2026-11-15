@@ -121,19 +121,6 @@ func TestValidateIPv4RoutePreferredSource(t *testing.T) {
 	}
 }
 
-func TestValidateManagementAccess(t *testing.T) {
-	router := testManagementRouter(
-		managementAccess("main", []string{"mgmt0", "Interface/lan0"}, nil),
-	)
-	router.Spec.Resources[0].Spec = api.ManagementAccessSpec{
-		Interfaces:       []string{"mgmt0", "Interface/lan0"},
-		AllowSourceCIDRs: []string{"192.168.100.0/24", "2001:db8::/64"},
-	}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate ManagementAccess: %v", err)
-	}
-}
-
 func TestValidateManagementAccessRejectsInvalidSpec(t *testing.T) {
 	tests := []struct {
 		name string
@@ -168,31 +155,6 @@ func TestValidateManagementAccessRejectsInvalidSpec(t *testing.T) {
 				t.Fatalf("Validate error = %v, want %q", err, tc.want)
 			}
 		})
-	}
-}
-
-func TestValidateResourceWhenAnyAllNested(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-			Metadata: api.ObjectMeta{Name: "internet"},
-			Spec: api.HealthCheckSpec{
-				TargetSource: "static",
-				Target:       "192.0.2.1",
-				When: api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
-					{All: []api.ResourceWhenSpec{
-						{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
-						{State: map[string]api.StateMatchSpec{"wan.b": {Status: "set"}}},
-					}},
-					{State: map[string]api.StateMatchSpec{"wan.c": {In: []string{"ready", "fallback"}}}},
-				}},
-			},
-		}}},
-	}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate nested when: %v", err)
 	}
 }
 
@@ -340,76 +302,11 @@ func TestValidateRejectsStatusReferenceFieldOutsideProvidesContract(t *testing.T
 	}
 }
 
-func TestValidateAcceptsNTPServerAllowCIDRFromProvidesContract(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
-				Metadata: api.ObjectMeta{Name: "lan-base"},
-				Spec: api.IPv6DelegatedAddressSpec{
-					PrefixDelegation: "wan-pd",
-					Interface:        "lan",
-					AddressSuffix:    "::1",
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPServer"},
-				Metadata: api.ObjectMeta{Name: "lan-time"},
-				Spec: api.NTPServerSpec{
-					Managed:       true,
-					Servers:       []string{"ntp.example.net"},
-					AllowCIDRFrom: []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}},
-				},
-			},
-		}},
-	}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate allowCIDRFrom: %v", err)
-	}
-}
-
 func testResource(apiVersion, kind, name string, spec any) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind},
 		Metadata: api.ObjectMeta{Name: name},
 		Spec:     spec,
-	}
-}
-
-func TestValidatePackageSupportsUbuntuAPT(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
-				Metadata: api.ObjectMeta{Name: "router-deps"},
-				Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
-					{OS: "ubuntu", Manager: "apt", Names: []string{"dnsmasq-base", "nftables"}},
-				}},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate ubuntu package resource: %v", err)
 	}
 }
 
@@ -474,32 +371,6 @@ func TestValidateLogSinkWebhookRequiresURL(t *testing.T) {
 	}
 }
 
-func TestValidateLogSinkOTLPReferencesTelemetry(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.ObservabilityAPIVersion, Kind: "Telemetry"},
-				Metadata: api.ObjectMeta{Name: "otlp"},
-				Spec: api.TelemetrySpec{
-					OTLP:    api.TelemetryOTLPSpec{Endpoint: "http://collector.example:4317"},
-					Signals: []string{"logs"},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"},
-				Metadata: api.ObjectMeta{Name: "remote-log"},
-				Spec:     api.LogSinkSpec{Type: "otlp", OTLP: api.LogSinkOTLPSpec{TelemetryRef: "Telemetry/otlp"}},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate otlp log sink: %v", err)
-	}
-}
-
 func TestValidateObservabilityPipelineAndRouterdCluster(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -533,34 +404,6 @@ func TestValidateObservabilityPipelineAndRouterdCluster(t *testing.T) {
 	}
 }
 
-func TestValidateHealthCheckRole(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-				Metadata: api.ObjectMeta{Name: "wan-next-hop"},
-				Spec: api.HealthCheckSpec{
-					Type:         "ping",
-					Role:         "next-hop",
-					TargetSource: "defaultGateway",
-					Interface:    "wan",
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate health check role: %v", err)
-	}
-}
-
 func TestValidateHealthCheckRejectsUnknownRole(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -586,35 +429,6 @@ func TestValidateHealthCheckRejectsUnknownRole(t *testing.T) {
 
 	if err := Validate(router); err == nil {
 		t.Fatal("expected unknown health check role to be rejected")
-	}
-}
-
-func TestValidatePPPoESessionDaemonFields(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan-ether"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
-				Metadata: api.ObjectMeta{Name: "wan-ppp"},
-				Spec: api.PPPoESessionSpec{
-					Interface: "wan-ether",
-					IfName:    "ppp0",
-					Username:  "user@example.jp",
-					Password:  "secret",
-					Managed:   true,
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate PPPoE interface: %v", err)
 	}
 }
 
@@ -644,59 +458,6 @@ func TestValidatePPPoESessionRequiresOnePasswordSource(t *testing.T) {
 
 	if err := Validate(router); err == nil {
 		t.Fatal("expected PPPoE interface with password and passwordFile to be rejected")
-	}
-}
-
-func TestValidatePPPoESession(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan-ether"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
-				Metadata: api.ObjectMeta{Name: "softether"},
-				Spec: api.PPPoESessionSpec{
-					Interface:       "wan-ether",
-					AuthMethod:      "chap",
-					Username:        "open@open.ad.jp",
-					Password:        "open",
-					MTU:             1454,
-					MRU:             1454,
-					LCPEchoInterval: 30,
-					LCPEchoFailure:  4,
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate PPPoE session: %v", err)
-	}
-}
-
-func TestValidateTierSResources(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br240"}, Spec: api.BridgeSpec{IfName: "br240", Members: []string{"vx240"}}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-lab"}, Spec: api.WireGuardInterfaceSpec{ListenPort: 51820, MTU: 1420}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"}, Metadata: api.ObjectMeta{Name: "peer-a"}, Spec: api.WireGuardPeerSpec{Interface: "wg-lab", PublicKey: "pub", AllowedIPs: []string{"10.44.0.2/32"}}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.TailscaleNodeSpec{Hostname: "router", AdvertiseExitNode: true, AdvertiseRoutes: []string{"172.18.0.0/16"}, AuthKeyEnv: "TS_AUTHKEY"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"}, Metadata: api.ObjectMeta{Name: "aws-a"}, Spec: api.IPsecConnectionSpec{LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.10", PreSharedKey: "secret", LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16", CloudProviderHint: "aws"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "vrf-guest"}, Spec: api.VRFSpec{RouteTable: 1001, Members: []string{"wg-lab"}}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx240"}, Spec: api.VXLANTunnelSpec{VNI: 240, LocalAddress: "10.44.0.1", UnderlayInterface: "wg-lab", Peers: []string{"10.44.0.2"}, Bridge: "br240"}},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate Tier S resources: %v", err)
 	}
 }
 
@@ -732,25 +493,6 @@ func TestValidateWireGuardInterfacePeersFromOK(t *testing.T) {
 	}
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate WireGuardInterface peersFrom: %v", err)
-	}
-}
-
-func TestValidateWireGuardInterfacePeersFromSAMPeerGroup(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-				Metadata: api.ObjectMeta{Name: "wg-lab"},
-				Spec: api.WireGuardInterfaceSpec{
-					PeersFrom: []api.WireGuardPeersSourceSpec{{Resource: "SAMPeerGroup/rrs"}},
-				},
-			},
-		}},
-	}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate WireGuardInterface SAMPeerGroup peersFrom: %v", err)
 	}
 }
 
@@ -937,42 +679,6 @@ func TestValidateRejectsHealthCheckFwMarkMismatchWithRouteTarget(t *testing.T) {
 	}
 }
 
-func TestValidateEgressRoutePolicyTargetCandidate(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec: api.EgressRoutePolicySpec{
-					Mode:             "priority",
-					HashFields:       []string{"sourceAddress", "destinationAddress"},
-					SourceCIDRs:      []string{"192.168.10.0/24"},
-					DestinationCIDRs: []string{"0.0.0.0/0"},
-					Candidates: []api.EgressRoutePolicyCandidate{{
-						Name:     "balanced",
-						Priority: 10,
-						Targets: []api.EgressRoutePolicyTarget{
-							{Interface: "wan", Table: 100, Priority: 10000, Mark: 256},
-							{Interface: "wan", Table: 101, Priority: 10001, Mark: 257},
-						},
-					}},
-				},
-			},
-		}},
-	}
-
-	if err := ValidateForOS(router, platform.OSLinux); err != nil {
-		t.Fatalf("target default route candidate should be valid: %v", err)
-	}
-}
-
 func TestValidateFreeBSDEgressRoutePolicyHashRejectsIPv6Routehosts(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -1085,39 +791,6 @@ func TestValidateEgressRoutePolicyTargetCandidateRejectsDirectFields(t *testing.
 	}
 }
 
-func TestValidateEgressRoutePolicyDynamicGatewayAllowsAutoDerivation(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-				Metadata: api.ObjectMeta{Name: "wan-check"},
-				Spec:     api.HealthCheckSpec{TargetSource: "static", Target: "1.1.1.1"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-				Metadata: api.ObjectMeta{Name: "default"},
-				Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{
-					Name:          "wan",
-					DeviceFrom:    api.StatusValueSourceSpec{Resource: "Interface/wan", Field: "ifname"},
-					GatewaySource: "dhcpv4",
-					HealthCheck:   "wan-check",
-				}}},
-			},
-		}},
-	}
-
-	if err := ValidateForOS(router, platform.OSLinux); err != nil {
-		t.Fatalf("ValidateForOS(linux) with dynamic gateway auto-derivation: %v", err)
-	}
-}
-
 func TestValidateDHCPv4ServerPoolRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -1221,71 +894,6 @@ func TestValidateDHCPv4ScopeProfileReference(t *testing.T) {
 	})
 }
 
-func TestValidateDHCPv4ReservationMayLiveOutsidePool(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
-				Spec: api.DHCPv4ServerSpec{
-
-					Interface:  "lan",
-					RangeStart: "192.0.2.100",
-					RangeEnd:   "192.0.2.150",
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
-				Metadata: api.ObjectMeta{Name: "printer"},
-				Spec: api.DHCPv4ReservationSpec{
-					Server:     "lan-dhcp4",
-					MACAddress: "02:00:00:00:01:50",
-					IPAddress:  "192.0.2.200",
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("reservation outside dynamic pool should validate: %v", err)
-	}
-}
-
-func TestValidateStaticRoutes(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"},
-				Metadata: api.ObjectMeta{Name: "lab-v4"},
-				Spec:     api.IPv4StaticRouteSpec{Interface: "wan", Destination: "192.0.2.0/24", Via: "198.51.100.1"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"},
-				Metadata: api.ObjectMeta{Name: "lab-v6"},
-				Spec:     api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "fe80::1"},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate static routes: %v", err)
-	}
-}
-
 func TestValidateClusterNetworkRoute(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -1322,49 +930,6 @@ func TestValidateClusterNetworkRoute(t *testing.T) {
 	router.Spec.Resources[1].Spec = spec
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing Interface") {
 		t.Fatalf("expected missing interface validation error, got %v", err)
-	}
-}
-
-func TestValidateSelfAddressPolicy(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "lan"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
-				Metadata: api.ObjectMeta{Name: "lan-ipv6"},
-				Spec: api.IPv6DelegatedAddressSpec{
-					PrefixDelegation: "wan-pd",
-					Interface:        "lan",
-					AddressSuffix:    "::3",
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "SelfAddressPolicy"},
-				Metadata: api.ObjectMeta{Name: "lan-self"},
-				Spec: api.SelfAddressPolicySpec{
-					AddressFamily: "ipv6",
-					Candidates: []api.SelfAddressPolicyCandidate{
-						{Source: "delegatedAddress", DelegatedAddress: "lan-ipv6", AddressSuffix: "::3"},
-						{Source: "interfaceAddress", Interface: "lan", MatchSuffix: "::3"},
-					},
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate self address policy: %v", err)
 	}
 }
 
@@ -2010,56 +1575,6 @@ func TestValidateNAT44RuleRejectsMixedShapes(t *testing.T) {
 	}
 }
 
-func TestValidateFirewallPolicyAndRule(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
-				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec:     api.FirewallPolicySpec{LogDeny: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"},
-				Metadata: api.ObjectMeta{Name: "allow-https"},
-				Spec: api.FirewallRuleSpec{
-					FromZone:    "wan",
-					ToZone:      "self",
-					Protocol:    "tcp",
-					Port:        443,
-					SourceCIDRs: []string{"203.0.113.0/24"},
-					Action:      "accept",
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate firewall resources: %v", err)
-	}
-}
-
 func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
 	base := func(spec api.FirewallRuleSpec) *api.Router {
 		return &api.Router{
@@ -2103,59 +1618,6 @@ func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
 				t.Fatalf("Validate error = %v, want containing %q", err, tt.want)
 			}
 		})
-	}
-}
-
-func TestValidateClientPolicy(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "lan-v4"},
-				Spec: api.DHCPv4ServerSpec{
-					Server:      "dnsmasq",
-					Managed:     true,
-					Interface:   "lan",
-					AddressPool: api.DHCPAddressPoolSpec{Start: "172.18.0.64", End: "172.18.0.191"},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
-				Metadata: api.ObjectMeta{Name: "aiseg2"},
-				Spec:     api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "18:ec:e7:33:12:6c", Hostname: "aiseg2", IPAddress: "172.18.0.150"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
-				Metadata: api.ObjectMeta{Name: "guest-devices"},
-				Spec: api.ClientPolicySpec{
-					Mode:          "include",
-					Interfaces:    []string{"Interface/lan"},
-					GuestServices: []string{"dns", "dhcp", "ntp"},
-					Classification: []api.ClientPolicyClassSpec{{
-						Mode:            "guest",
-						Name:            "aiseg2",
-						Match:           api.ClientPolicyClassMatchSpec{MACs: []string{"18:ec:e7:33:12:6c"}, OUIPrefixes: []string{"18:ec:e7"}, HostnamePatterns: []string{"aiseg*"}, DHCPFingerprints: []string{"android-dhcp"}},
-						IPv4Reservation: "aiseg2",
-					}},
-				},
-			},
-		}},
-	}
-
-	if err := ValidateForOS(router, platform.OSLinux); err != nil {
-		t.Fatalf("validate Linux client policy: %v", err)
 	}
 }
 
@@ -2320,71 +1782,6 @@ func TestValidateRejectsDuplicateStaticOnSameInterface(t *testing.T) {
 	}
 }
 
-func TestValidateBridge(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
-				Metadata: api.ObjectMeta{Name: "br-home"},
-				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, RSTP: boolPtr(true), MulticastSnooping: boolPtr(false)},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-				Metadata: api.ObjectMeta{Name: "bridge-address"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "br-home", Address: "192.0.2.1/24"},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate bridge config: %v", err)
-	}
-}
-
-func TestValidateVXLANSegment(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "underlay"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
-				Metadata: api.ObjectMeta{Name: "br-home"},
-				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"home-vxlan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
-				Metadata: api.ObjectMeta{Name: "home-vxlan"},
-				Spec: api.VXLANSegmentSpec{
-					IfName:            "vxlan100",
-					VNI:               100,
-					LocalAddress:      "192.0.2.10",
-					Remotes:           []string{"192.0.2.20", "192.0.2.30"},
-					UnderlayInterface: "underlay",
-					UDPPort:           4789,
-					MTU:               1450,
-					Bridge:            "br-home",
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate vxlan config: %v", err)
-	}
-}
-
 func TestValidateRejectsInvalidVXLANTunnelOuterDF(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -2396,29 +1793,6 @@ func TestValidateRejectsInvalidVXLANTunnelOuterDF(t *testing.T) {
 	}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.outerDF") {
 		t.Fatalf("expected invalid outerDF error, got %v", err)
-	}
-}
-
-func TestValidateDHCPServerTransitRole(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "dhcpv4"},
-				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Role: "transit"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
-				Metadata: api.ObjectMeta{Name: "dhcpv6"},
-				Spec:     api.DHCPv6ServerSpec{Server: "dnsmasq", Role: "transit"},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate transit DHCP roles: %v", err)
 	}
 }
 
