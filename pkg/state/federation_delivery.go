@@ -84,8 +84,8 @@ func (s *SQLiteStore) RecordDelivery(eventID, peer string) error {
 	return nil
 }
 
-// UpdateDeliveryStatus updates the status, attempts, last_attempt_at,
-// last_error, delivered_at, and event_expires_at for the (event_id, peer) row.
+// UpdateDeliveryStatus records the result for the (event_id, peer) pair.
+// The row may have been pruned while delivery was in progress.
 // last_attempt_at is stamped with the store clock. deliveredAt and
 // eventExpiresAt are stored only when non-zero (otherwise left NULL).
 func (s *SQLiteStore) UpdateDeliveryStatus(eventID, peer, status string, attempts int, lastErr string, deliveredAt time.Time, eventExpiresAt time.Time) error {
@@ -110,10 +110,12 @@ func (s *SQLiteStore) UpdateDeliveryStatus(eventID, peer, status string, attempt
 		expiresAt = sql.NullInt64{Int64: eventExpiresAt.UTC().Unix(), Valid: true}
 	}
 	_, err := s.db.Exec(`
-		UPDATE event_deliveries
-		SET status = ?, attempts = ?, last_attempt_at = ?, last_error = ?, delivered_at = ?, event_expires_at = ?
-		WHERE event_id = ? AND peer = ?
-	`, status, attempts, lastAttempt, lastErr, delivered, expiresAt, eventID, peer)
+		INSERT INTO event_deliveries (event_id, peer, status, attempts, last_attempt_at, last_error, delivered_at, event_expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(event_id, peer) DO UPDATE SET
+		  status = excluded.status, attempts = excluded.attempts, last_attempt_at = excluded.last_attempt_at,
+		  last_error = excluded.last_error, delivered_at = excluded.delivered_at, event_expires_at = excluded.event_expires_at
+	`, eventID, peer, status, attempts, lastAttempt, lastErr, delivered, expiresAt)
 	if err != nil {
 		return fmt.Errorf("update delivery status: %w", err)
 	}
