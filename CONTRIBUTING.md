@@ -93,9 +93,6 @@ Update public docs when behavior changes:
 - `docs/`
 - `website/i18n/ja/docusaurus-plugin-content-docs/current/`
 
-Use `internal/notes/` for lab-specific validation notes. Do not put lab notes
-under `docs/`, because the website publishes them.
-
 ## Commit style
 
 Use small commits with direct messages. Prefer one behavioral change per commit
