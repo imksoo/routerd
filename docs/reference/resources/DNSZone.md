@@ -94,6 +94,6 @@ Implementation: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/p
 
 The ordinary status-reference validator accepts these field names for this kind. This allowlist does not guarantee that every field is currently populated; inspect runtime status. These are outputs, not YAML spec fields.
 
-`phase`, `zone`, `records`, `pendingRecords`, `updatedAt`
+`phase`, `zone`, `records`, `pendingRecords`
 
 [Example](https://github.com/imksoo/routerd/blob/main/examples/example-dslite-home.yaml)

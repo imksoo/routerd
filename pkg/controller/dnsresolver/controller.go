@@ -640,7 +640,6 @@ func (c Controller) saveZoneStatus(name string, spec api.DNSZoneSpec, pendingRec
 		"zone":           spec.Zone,
 		"records":        len(spec.Records),
 		"pendingRecords": pendingRecords,
-		"updatedAt":      time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSZone", name, status)
 }

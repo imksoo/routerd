@@ -93,7 +93,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"DNSForwarder":                    withCommon(s("resolver", "Resolver reference"), ss("upstreams", "Upstream references")),
 		"DNSResolver":                     withCommon(i("listeners", "Listener count"), ss("listenAddresses", "Resolved listen addresses"), i("sources", "Source count"), t("updatedAt", "Update time")),
 		"DNSUpstream":                     withCommon(s("address", "Upstream address"), s("url", "Resolved upstream URL")),
-		"DNSZone":                         withCommon(s("zone", "DNS zone name"), i("records", "Record count"), os("pendingRecords", "Records waiting for source status"), t("updatedAt", "Update time")),
+		"DNSZone":                         withCommon(s("zone", "DNS zone name"), i("records", "Record count"), os("pendingRecords", "Records waiting for source status")),
 		"DSLiteTunnel":                    withCommon(s("interface", "Tunnel interface name"), s("device", "Tunnel device name"), s("tunnelName", "Tunnel device name"), s("localIPv6", "Local IPv6 endpoint"), s("innerLocalIPv4", "Inner local IPv4 endpoint"), s("innerRemoteIPv4", "Inner remote IPv4 endpoint"), s("localInterface", "Local underlay interface"), s("aftrName", "AFTR hostname"), s("aftrIPv6", "AFTR IPv6 endpoint"), i("mtu", "Tunnel MTU"), b("dryRun", "Dry-run status")),
 		"CloudProviderProfile":            withCommon(s("provider", "Cloud provider"), ss("capabilities", "Provider capabilities")),
 		"DerivedEvent":                    withCommon(s("topic", "Emitted event topic")),
