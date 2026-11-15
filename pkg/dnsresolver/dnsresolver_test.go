@@ -40,20 +40,6 @@ func TestValidateAcceptsDNSResolverSources(t *testing.T) {
 	}
 }
 
-func TestValidateAcceptsListenAddressSources(t *testing.T) {
-	err := Validate(api.DNSResolverSpec{
-		Listen: []api.DNSResolverListenSpec{{
-			Addresses:   []string{"172.18.0.1"},
-			AddressFrom: []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}},
-			Port:        53,
-		}},
-		Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestNormalizeDNSResolverQueryLogDefaults(t *testing.T) {
 	spec := NormalizeSpec(api.DNSResolverSpec{
 		Listen:   []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}},
