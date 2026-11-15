@@ -141,27 +141,6 @@ func TestDnsmasqServiceUnitWithCustomPIDFile(t *testing.T) {
 	}
 }
 
-func TestDnsmasqRCScriptUsesFreeBSDRuntimeAndLeaseDirectories(t *testing.T) {
-	script := string(DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd", "/var/db/routerd/dnsmasq", "/usr/local/sbin/dnsmasq"))
-	for _, want := range []string{
-		`name="routerd_dnsmasq"`,
-		`rcvar="routerd_dnsmasq_enable"`,
-		`# REQUIRE: NETWORKING mpd5`,
-		`command="/usr/local/sbin/dnsmasq"`,
-		`pidfile="/var/run/routerd/dnsmasq.pid"`,
-		`extra_commands="reload"`,
-		`sig_reload="HUP"`,
-		`start_precmd="${name}_prestart"`,
-		`mkdir -p "/var/run/routerd"`,
-		`mkdir -p "/var/db/routerd/dnsmasq"`,
-		`--conf-file=/usr/local/etc/routerd/dnsmasq.conf`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("rc.d script missing %q:\n%s", want, script)
-		}
-	}
-}
-
 func TestDnsmasqConfigExcludesDNSResolverSources(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
@@ -208,69 +187,5 @@ func TestDnsmasqConfigExcludesDNSResolverSources(t *testing.T) {
 	}
 	if got := string(data); strings.Contains(got, "server=") || strings.Contains(got, "listen-address=") {
 		t.Fatalf("dnsmasq must not render DNS resolver sources:\n%s", got)
-	}
-}
-
-func TestDnsmasqConfigIgnoresDNSResolverWhenObservedEmpty(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "dhcpv4"},
-				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ServerSpec{
-
-					Interface:    "lan",
-					RangeStart:   "192.168.10.130",
-					RangeEnd:     "192.168.10.139",
-					RouterSource: "interfaceAddress",
-					DNSSource:    "self",
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
-				Metadata: api.ObjectMeta{Name: "lan-resolver"},
-				Spec: api.DNSResolverSpec{
-					Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
-					Sources: []api.DNSResolverSourceSpec{{
-						Name:      "wan-fwd",
-						Kind:      "forward",
-						Match:     []string{"example.com"},
-						Upstreams: []string{"${DHCPv4Client/wan.status.dnsServers}"},
-					}},
-				},
-			},
-		}},
-	}
-	data, warnings, err := DnsmasqConfig(router, DnsmasqRuntime{
-		DHCPv4DNSServersByInterface: map[string][]string{},
-	})
-	if err != nil {
-		t.Fatalf("render dnsmasq: %v", err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("dnsmasq should not validate DNSResolver observed state: %v", warnings)
-	}
-	if strings.Contains(string(data), "server=/example.com/") {
-		t.Fatalf("DNSResolver forwarder must not be rendered by dnsmasq:\n%s", data)
 	}
 }

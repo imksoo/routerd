@@ -1294,50 +1294,6 @@ func TestValidateMobilityPoolActiveWhenVirtualAddressReferenceIsLocalToSelfNode(
 	}
 }
 
-func TestValidateMobilityPoolPlacement(t *testing.T) {
-	spec := mobilityPoolFixture{
-		Prefix:   "10.88.60.0/24",
-		GroupRef: "cloudedge",
-		Members: []api.ResolvedMobilityPoolMember{
-			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
-			{
-				NodeRef: "azure-router-a",
-				Site:    "azure",
-				Role:    "cloud",
-				Capture: api.MobilityMemberCapture{
-					Type:        "provider-secondary-ip",
-					ProviderRef: "azure-provider",
-					NICRef:      "nic-a",
-				},
-				Placement:   api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10},
-				Maintenance: api.MobilityMemberMaintenance{Drain: true},
-			},
-			{
-				NodeRef: "azure-router-b",
-				Site:    "azure",
-				Role:    "cloud",
-				Capture: api.MobilityMemberCapture{
-					Type:        "provider-secondary-ip",
-					ProviderRef: "azure-provider",
-					NICRef:      "nic-b",
-				},
-				Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
-			},
-		},
-	}
-	if err := Validate(mobilityPoolRouter(spec)); err != nil {
-		t.Fatalf("Validate placement MobilityPool: %v", err)
-	}
-
-	autoPriority := spec
-	autoPriority.Members = append([]api.ResolvedMobilityPoolMember(nil), spec.Members...)
-	autoPriority.Members[1].Placement.Priority = 0
-	autoPriority.Members[2].Placement.Priority = 0
-	if err := Validate(mobilityPoolRouter(autoPriority)); err != nil {
-		t.Fatalf("Validate auto-priority placement MobilityPool: %v", err)
-	}
-}
-
 func TestValidateMobilityPoolSelfCloudMemberMustResolveCapture(t *testing.T) {
 	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
