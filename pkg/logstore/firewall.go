@@ -922,7 +922,7 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 		}
 		end := min(start+dpiLookupBatchSize, len(entries))
 		values := make([]string, 0, end-start)
-		args := make([]any, 0, 6*(end-start)+1)
+		args := make([]any, 0, 6*(end-start)+2)
 		for i := start; i < end; i++ {
 			entry := entries[i]
 			protocol := strings.ToLower(strings.TrimSpace(entry.Protocol))
@@ -935,16 +935,20 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 		if len(values) == 0 {
 			continue
 		}
-		args = append(args, now.Add(-ttl).UnixNano())
+		cutoff := now.Add(-ttl).UnixNano()
+		args = append(args, cutoff, cutoff)
 		query := `WITH requested(request_index,request_protocol,request_src,request_dst,request_src_port,request_dst_port) AS (VALUES ` + strings.Join(values, ",") + `)
 SELECT request_index,flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),` + optionalTextColumn(columns, "detected_protocol") + `,` + optionalTextColumn(columns, "master_protocol") + `,` + optionalTextColumn(columns, "application_protocol") + `,` + optionalTextColumn(columns, "category") + `,` + optionalTextColumn(columns, "risk") + `,` + optionalIntColumn(columns, "confidence") + `,` + optionalTextColumn(columns, "metadata_json") + `,` + optionalTextColumn(columns, "engine") + `,` + optionalTextColumn(columns, "source") + `,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
 FROM requested JOIN dpi_flow ON flow_id = (
- SELECT candidate.flow_id FROM dpi_flow AS candidate
- WHERE candidate.ts_last >= ? AND candidate.protocol = request_protocol AND (
-  (candidate.src_address = request_src AND candidate.dst_address = request_dst AND coalesce(candidate.src_port,0) = request_src_port AND coalesce(candidate.dst_port,0) = request_dst_port)
-  OR
-  (candidate.dst_address = request_src AND candidate.src_address = request_dst AND coalesce(candidate.dst_port,0) = request_src_port AND coalesce(candidate.src_port,0) = request_dst_port)
- ) ORDER BY candidate.ts_last DESC LIMIT 1
+ SELECT flow_id FROM (
+  SELECT flow_id, ts_last FROM dpi_flow
+  WHERE ts_last >= ? AND protocol = request_protocol AND src_address = request_src AND dst_address = request_dst
+    AND coalesce(src_port,0) = request_src_port AND coalesce(dst_port,0) = request_dst_port
+  UNION ALL
+  SELECT flow_id, ts_last FROM dpi_flow
+  WHERE ts_last >= ? AND protocol = request_protocol AND dst_address = request_src AND src_address = request_dst
+    AND coalesce(dst_port,0) = request_src_port AND coalesce(src_port,0) = request_dst_port
+ ) ORDER BY ts_last DESC LIMIT 1
 )`
 		if err := l.queryDPIFlowBatch(ctx, query, args, out); err != nil {
 			return nil, err

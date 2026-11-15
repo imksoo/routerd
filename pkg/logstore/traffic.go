@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS flows (
 );
 CREATE INDEX IF NOT EXISTS flows_client_ts ON flows(client_address, ts_started);
 CREATE INDEX IF NOT EXISTS flows_peer_ts ON flows(peer_address, ts_started);
+CREATE INDEX IF NOT EXISTS flows_active ON flows(flow_key) WHERE ts_ended IS NULL;
 `)
 	if err != nil {
 		return err
