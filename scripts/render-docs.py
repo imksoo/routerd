@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Refresh committed static documentation: python -m pip install Markdown==3.11.3."""
+"""Render docs/*.md into the publish directory. Requires Markdown==3.11.3."""
 import html
 from pathlib import Path
 import re
+import sys
 from urllib.parse import urlsplit, urlunsplit
 
 import markdown
@@ -10,7 +11,7 @@ from markdown.extensions.toc import slugify_unicode
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
-OUT = ROOT / "website/static/docs"
+OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "website/build/docs"
 LOCALES = {
     "en": ("English", "Documentation", "Setup", "Resources", "Examples", "On this page"),
     "ja": ("日本語", "文書", "設定手順", "リソース一覧", "設定例", "このページの内容"),
@@ -38,11 +39,6 @@ def rewrite(url, source):
         return urlunsplit(parsed._replace(path=parsed.path + ".html"))
     return url
 
-
-expected = {OUT / source.relative_to(DOCS).with_suffix(".html") for source in DOCS.rglob("*.md")}
-for old in OUT.rglob("*.html"):
-    if old not in expected:
-        old.unlink()
 
 for source in sorted(DOCS.rglob("*.md")):
     rel = source.relative_to(DOCS)
@@ -77,4 +73,4 @@ for source in sorted(DOCS.rglob("*.md")):
     target = OUT / rel.with_suffix(".html")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page)
-print("Static documentation refreshed")
+print("Static documentation rendered")
