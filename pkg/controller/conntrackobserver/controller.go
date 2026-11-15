@@ -225,11 +225,11 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 		if flow.FlowKey == "" {
 			continue
 		}
-		if dpiStore != nil {
-			enrichTrafficFlowFromDPIStore(ctx, dpiStore, &flow, now, time.Hour)
-		}
 		active = append(active, flow.FlowKey)
 		flows = append(flows, flow)
+	}
+	if dpiStore != nil {
+		enrichTrafficFlowsFromDPIStore(ctx, dpiStore, flows, now, time.Hour)
 	}
 	c.recordTrafficMetrics(ctx, table.Entries)
 	if err := log.SyncActive(ctx, flows, active, now); err != nil {
@@ -378,21 +378,23 @@ func firewallLogPath(router *api.Router) string {
 	return ""
 }
 
-func enrichTrafficFlowFromDPIStore(ctx context.Context, store *logstore.FirewallLog, flow *logstore.TrafficFlow, now time.Time, ttl time.Duration) {
-	if store == nil || flow == nil {
+func enrichTrafficFlowsFromDPIStore(ctx context.Context, store *logstore.FirewallLog, flows []logstore.TrafficFlow, now time.Time, ttl time.Duration) {
+	entries := make([]logstore.FirewallLogEntry, len(flows))
+	for i, flow := range flows {
+		entries[i] = logstore.FirewallLogEntry{
+			Protocol: flow.Protocol, SrcAddress: flow.ClientAddress, SrcPort: flow.ClientPort,
+			DstAddress: flow.PeerAddress, DstPort: flow.PeerPort,
+		}
+	}
+	matches, err := store.FindDPIFlowsForFirewallEntries(ctx, entries, now, ttl)
+	if err != nil {
 		return
 	}
-	dpiFlow, ok, err := store.FindDPIFlowForFirewallEntry(ctx, logstore.FirewallLogEntry{
-		Protocol:   flow.Protocol,
-		SrcAddress: flow.ClientAddress,
-		SrcPort:    flow.ClientPort,
-		DstAddress: flow.PeerAddress,
-		DstPort:    flow.PeerPort,
-	}, now, ttl)
-	if err != nil || !ok {
-		return
+	for i, match := range matches {
+		if match != nil {
+			applyDPIFlow(&flows[i], *match)
+		}
 	}
-	applyDPIFlow(flow, dpiFlow)
 }
 
 func applyDPIFlow(flow *logstore.TrafficFlow, dpiFlow logstore.DPIFlowEntry) {
