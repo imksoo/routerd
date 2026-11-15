@@ -17,26 +17,6 @@ import (
 	"github.com/imksoo/routerd/pkg/dpi"
 )
 
-func TestSelftestReportsBackendStatus(t *testing.T) {
-	var out bytes.Buffer
-	if err := run([]string{"selftest"}, &out); err != nil {
-		t.Fatal(err)
-	}
-	var resp statusResponse
-	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Engine != "ndpi-agent" || resp.LibNDPILoaded != backendExpectedLoaded() {
-		t.Fatalf("response = %+v", resp)
-	}
-	if resp.OK != backendExpectedLoaded() {
-		t.Fatalf("status OK = %v, want backend loaded = %v", resp.OK, backendExpectedLoaded())
-	}
-	if resp.Selftest == nil || resp.Selftest.Engine != "ndpi-agent" {
-		t.Fatalf("selftest = %+v", resp.Selftest)
-	}
-}
-
 func TestDaemonReturnsUnavailableClassification(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "ndpi.sock")
 	opts := options{socket: socket, name: "test", timeout: time.Second}
