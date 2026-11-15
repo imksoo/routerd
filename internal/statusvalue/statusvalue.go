@@ -5,11 +5,11 @@
 package statusvalue
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"net/netip"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -100,9 +100,12 @@ func KeepUpdateTime(current, next map[string]any) {
 	oldFields, newFields := maps.Clone(current), maps.Clone(next)
 	delete(oldFields, "updatedAt")
 	delete(newFields, "updatedAt")
-	oldJSON, oldErr := json.Marshal(oldFields)
-	newJSON, newErr := json.Marshal(newFields)
-	if oldErr == nil && newErr == nil && bytes.Equal(oldJSON, newJSON) {
+	newJSON, err := json.Marshal(newFields)
+	if err != nil {
+		return
+	}
+	var normalized map[string]any
+	if json.Unmarshal(newJSON, &normalized) == nil && reflect.DeepEqual(oldFields, normalized) {
 		next["updatedAt"] = stamp
 	}
 }
