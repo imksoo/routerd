@@ -1637,7 +1637,7 @@ func configuredDHCPLeasePaths(controllerDnsmasqConfig string) []string {
 	if leaseFile := dnsmasqLeaseFileForPlatform(); strings.TrimSpace(leaseFile) != "" {
 		paths = append(paths, leaseFile)
 	}
-	paths = append(paths, platform.DnsmasqLeaseCandidates(platformDefaults, platformFeatures)...)
+	paths = append(paths, platform.DnsmasqLeaseCandidates(platformDefaults)...)
 	return dedupeStrings(paths)
 }
 

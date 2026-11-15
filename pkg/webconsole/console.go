@@ -61,8 +61,8 @@ func New(opts Options) Handler {
 		opts.ConnectionsLimit = 200
 	}
 	if len(opts.DHCPLeasePaths) == 0 {
-		defaults, features := platform.Current()
-		opts.DHCPLeasePaths = platform.DnsmasqLeaseCandidates(defaults, features)
+		defaults, _ := platform.Current()
+		opts.DHCPLeasePaths = platform.DnsmasqLeaseCandidates(defaults)
 	}
 	if opts.DHCPFingerprintLogPath == "" {
 		defaults, _ := platform.Current()

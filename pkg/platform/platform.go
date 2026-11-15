@@ -171,17 +171,9 @@ func (d Defaults) DnsmasqLeaseFile() string {
 	return strings.TrimRight(d.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
 }
 
-// RuntimeDnsmasqLeaseFile returns the legacy runtime dnsmasq lease file path.
-func (d Defaults) RuntimeDnsmasqLeaseFile() string {
-	return strings.TrimRight(d.RuntimeDir, "/") + "/dnsmasq.leases"
-}
-
 // DnsmasqLeaseCandidates returns the dnsmasq lease paths readers should try.
-func DnsmasqLeaseCandidates(d Defaults, f Features) []string {
-	if f.HasRCD {
-		return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
-	}
-	return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
+func DnsmasqLeaseCandidates(d Defaults) []string {
+	return []string{d.DnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
 }
 
 // BGPPaths returns the sockets and durable applied-state file shared by the

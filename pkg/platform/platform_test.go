@@ -8,15 +8,12 @@ import (
 
 func TestDnsmasqLeaseCandidatesPreferActualManagedPath(t *testing.T) {
 	defaults := Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"}
-	if got := DnsmasqLeaseCandidates(defaults, Features{}); got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
+	if got := DnsmasqLeaseCandidates(defaults); got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
 		t.Fatalf("systemd candidates = %#v, want state path first", got)
 	}
 	freebsd := Defaults{RuntimeDir: "/var/run/routerd", StateDir: "/var/db/routerd"}
-	got := DnsmasqLeaseCandidates(freebsd, Features{HasRCD: true})
+	got := DnsmasqLeaseCandidates(freebsd)
 	if got[0] != "/var/db/routerd/dnsmasq/dnsmasq.leases" {
 		t.Fatalf("freebsd candidates = %#v, want state path first", got)
-	}
-	if got[1] != "/var/run/routerd/dnsmasq.leases" {
-		t.Fatalf("freebsd candidates = %#v, want runtime fallback second", got)
 	}
 }

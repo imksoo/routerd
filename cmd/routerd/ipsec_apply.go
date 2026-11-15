@@ -176,10 +176,6 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, e
 	}
 	dir := ipsecConfigDir()
 	configFile := filepath.Join(dir, "routerd.conf")
-	legacyDir := ipsecLegacyConfigDir()
-	if legacyDir != "" && filepath.Clean(legacyDir) == filepath.Clean(dir) {
-		legacyDir = ""
-	}
 	desired := map[string][]byte{}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "IPsecConnection" {
@@ -204,13 +200,6 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, e
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("read IPsec swanctl directory %s: %w", dir, err)
 	}
-	var legacyEntries []os.DirEntry
-	if legacyDir != "" {
-		legacyEntries, err = os.ReadDir(legacyDir)
-		if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read legacy IPsec swanctl directory %s: %w", legacyDir, err)
-		}
-	}
 	pending, err := ipsecPendingLoad(dir)
 	if err != nil {
 		return nil, err
@@ -222,14 +211,7 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, e
 			break
 		}
 	}
-	hasLegacyManaged := false
-	for _, entry := range legacyEntries {
-		if isLegacyRouterdIPsecRuntimeFile(entry.Name()) {
-			hasLegacyManaged = true
-			break
-		}
-	}
-	shouldLoad := len(desired) > 0 || pending || hasManaged || hasLegacyManaged
+	shouldLoad := len(desired) > 0 || pending || hasManaged
 	if shouldLoad {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, fmt.Errorf("create IPsec swanctl directory %s: %w", dir, err)
@@ -271,17 +253,6 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, e
 		path := filepath.Join(dir, name)
 		if err := os.Remove(path); err != nil {
 			return changed, fmt.Errorf("remove stale IPsec swanctl configuration %s: %w", path, err)
-		}
-		changed = append(changed, "removed:"+path)
-	}
-	for _, entry := range legacyEntries {
-		name := entry.Name()
-		if !isLegacyRouterdIPsecRuntimeFile(name) {
-			continue
-		}
-		path := filepath.Join(legacyDir, name)
-		if err := removeRouterdIPsecRuntimeFile(path); err != nil {
-			return changed, fmt.Errorf("remove legacy IPsec swanctl configuration %s: %w", path, err)
 		}
 		changed = append(changed, "removed:"+path)
 	}
@@ -336,10 +307,6 @@ func isManagedIPsecConnectionConfig(name string) bool {
 
 func isRouterdIPsecRuntimeFile(name string) bool {
 	return isManagedIPsecConnectionConfig(name) || name == "routerd.conf" || name == ipsecPendingLoadMarker
-}
-
-func isLegacyRouterdIPsecRuntimeFile(name string) bool {
-	return isRouterdIPsecRuntimeFile(name)
 }
 
 func removeRouterdIPsecRuntimeFile(path string) error {
@@ -409,13 +376,6 @@ func ipsecConfigDir() string {
 		return "/usr/local/etc/routerd/swanctl"
 	}
 	return "/etc/routerd/swanctl"
-}
-
-func ipsecLegacyConfigDir() string {
-	if platformDefaults.OS == platform.OSFreeBSD {
-		return "/usr/local/etc/swanctl/conf.d"
-	}
-	return "/etc/swanctl/conf.d"
 }
 
 func ipsecSwanctlPath() string {
