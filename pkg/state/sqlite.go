@@ -750,6 +750,9 @@ func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, e
 
 // statusJSONEqual ignores JSON object field order without rounding numbers.
 func statusJSONEqual(a, b []byte) bool {
+	if !json.Valid(a) {
+		return false
+	}
 	var left, right any
 	first := json.NewDecoder(bytes.NewReader(a))
 	first.UseNumber()
