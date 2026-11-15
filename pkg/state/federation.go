@@ -167,15 +167,20 @@ func (s *SQLiteStore) CountFederationEvents(group string) (int, error) {
 // events whose expires_at is set and in the past relative to now (unix seconds)
 // are excluded.
 func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]EventRecord, error) {
-	return s.listFederationEvents(group, nil, includeExpired, now)
+	return s.listFederationEvents(group, nil, "", includeExpired, now)
 }
 
 // ListLocalFederationEvents reads live events originating on the given node.
 func (s *SQLiteStore) ListLocalFederationEvents(group, node string, now int64) ([]EventRecord, error) {
-	return s.listFederationEvents(group, &node, false, now)
+	return s.listFederationEvents(group, &node, "", false, now)
 }
 
-func (s *SQLiteStore) listFederationEvents(group string, node *string, includeExpired bool, now int64) ([]EventRecord, error) {
+// ListFederationEventsByType reads live events of one type in a group.
+func (s *SQLiteStore) ListFederationEventsByType(group, eventType string, now int64) ([]EventRecord, error) {
+	return s.listFederationEvents(group, nil, eventType, false, now)
+}
+
+func (s *SQLiteStore) listFederationEvents(group string, node *string, eventType string, includeExpired bool, now int64) ([]EventRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -196,6 +201,10 @@ func (s *SQLiteStore) listFederationEvents(group string, node *string, includeEx
 	if node != nil {
 		clauses = append(clauses, "source_node = ?")
 		args = append(args, *node)
+	}
+	if eventType != "" {
+		clauses = append(clauses, "type = ?")
+		args = append(args, eventType)
 	}
 	if !includeExpired {
 		// Keep rows with no expiry (0/NULL) or that have not yet expired.
