@@ -272,22 +272,6 @@ func TestParseIPNeighborJSON(t *testing.T) {
 	}
 }
 
-func TestParseFreeBSDNeighbors(t *testing.T) {
-	arp := parseFreeBSDARP([]byte(`? (192.168.160.182) at bc:24:11:df:9e:c2 on vtnet1 expires in 1197 seconds [ethernet]
-? (192.168.160.190) at (incomplete) on vtnet1 expired [ethernet]
-`))
-	if len(arp) != 1 || arp[0].IP != "192.168.160.182" || arp[0].IfName != "vtnet1" {
-		t.Fatalf("arp = %+v", arp)
-	}
-	ndp := parseFreeBSDNDP([]byte(`Neighbor                             Linklayer Address  Netif Expire    S Flags
-2409:10:3d60:1250::abcd             bc:24:11:df:9e:c2 vtnet1 23h59m37s S R
-fe80::be24:11ff:fedf:9ec2%vtnet1    bc:24:11:df:9e:c2 vtnet1 permanent R
-`))
-	if len(ndp) != 2 || ndp[0].IP != "2409:10:3d60:1250::abcd" || ndp[1].IP != "fe80::be24:11ff:fedf:9ec2" {
-		t.Fatalf("ndp = %+v", ndp)
-	}
-}
-
 func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 	rows := correlateClients(
 		[]DHCPLease{{

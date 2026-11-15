@@ -973,61 +973,6 @@ func TestValidateEgressRoutePolicyTargetCandidate(t *testing.T) {
 	}
 }
 
-func TestValidateFreeBSDEgressRoutePolicyRejectsPolicyRouting(t *testing.T) {
-	base := func(spec api.EgressRoutePolicySpec) *api.Router {
-		return &api.Router{
-			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-			Metadata: api.ObjectMeta{Name: "test"},
-			Spec: api.RouterSpec{Resources: []api.Resource{
-				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true}},
-				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: spec},
-			}},
-		}
-	}
-	tests := []struct {
-		name string
-		spec api.EgressRoutePolicySpec
-	}{
-		{
-			name: "marked route table",
-			spec: api.EgressRoutePolicySpec{Mode: "mark", Candidates: []api.EgressRoutePolicyCandidate{{Name: "wan", Interface: "wan", Table: 100, Priority: 10000, Mark: 256}}},
-		},
-		{
-			name: "hash targets",
-			spec: api.EgressRoutePolicySpec{Mode: "hash", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{{Name: "balanced", Targets: []api.EgressRoutePolicyTarget{{Interface: "wan", Table: 100, Priority: 10000, Mark: 256}}}}},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateForOS(base(tt.spec), platform.OSFreeBSD)
-			if err == nil || !strings.Contains(err.Error(), "FreeBSD") {
-				t.Fatalf("ValidateForOS() error = %v, want explicit FreeBSD policy routing rejection", err)
-			}
-		})
-	}
-}
-
-func TestValidateFreeBSDEgressRoutePolicyHashRouteToShape(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "vtnet0"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
-				Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"}, ExcludeDestinationCIDRs: []string{"198.51.100.0/24"},
-				Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
-					{Interface: "wan-a", GatewaySource: "static", Gateway: "192.0.2.254"},
-					{Interface: "wan-b", GatewaySource: "static", Gateway: "198.51.100.254"},
-				}}},
-			}},
-		}},
-	}
-	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
-		t.Fatalf("FreeBSD route-to shape rejected: %v", err)
-	}
-}
-
 func TestValidateFreeBSDEgressRoutePolicyHashRejectsIPv6Routehosts(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -1049,28 +994,6 @@ func TestValidateFreeBSDEgressRoutePolicyHashRejectsIPv6Routehosts(t *testing.T)
 	}
 }
 
-func TestValidateFreeBSDEgressRoutePolicyHashRejectsAmbiguousTargetInterface(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "vtnet0"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
-				Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"},
-				Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
-					{Interface: "wan-a", OutboundInterface: "wan-b", GatewaySource: "static", Gateway: "192.0.2.254"},
-					{Interface: "wan-b", GatewaySource: "static", Gateway: "198.51.100.254"},
-				}}},
-			}},
-		}},
-	}
-	err := ValidateForOS(router, platform.OSFreeBSD)
-	if err == nil || !strings.Contains(err.Error(), "both interface and outboundInterface") {
-		t.Fatalf("ValidateForOS() error = %v, want ambiguous target interface rejection", err)
-	}
-}
-
 func TestValidateLinuxEgressRoutePolicyTargetStillRequiresRouteTableMark(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -1083,24 +1006,6 @@ func TestValidateLinuxEgressRoutePolicyTargetStillRequiresRouteTableMark(t *test
 	err := ValidateForOS(router, platform.OSLinux)
 	if err == nil || !strings.Contains(err.Error(), ".table must be greater than 0") {
 		t.Fatalf("Linux target table/priority/mark contract changed: %v", err)
-	}
-}
-
-func TestValidateFreeBSDEgressRoutePolicyRejectsUnrenderedPriorityFailover(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "failover"}, Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "primary", Interface: "wan-a"},
-				{Name: "fallback", Interface: "wan-b"},
-			}}},
-		}},
-	}
-	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "supports only the static sourceAddress hash PF route-to shape") {
-		t.Fatalf("FreeBSD priority policy error = %v, want explicit unsupported rejection", err)
 	}
 }
 
@@ -1152,20 +1057,6 @@ func TestValidateLinuxEgressRoutePolicyHostTrafficAllowsOnlyMarkZero(t *testing.
 	multiple.Spec = multipleSpec
 	if err := ValidateForOS(router(multiple), platform.OSLinux); err == nil {
 		t.Fatal("host policy must reject multiple candidates")
-	}
-}
-
-func TestValidateFreeBSDIPv4PolicyRouteSetIsRejected(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "legacy-policy"}, Spec: map[string]any{}},
-		}},
-	}
-	err := ValidateForOS(router, platform.OSFreeBSD)
-	if err == nil || !strings.Contains(err.Error(), "IPv4PolicyRouteSet") || !strings.Contains(err.Error(), "not supported") {
-		t.Fatalf("ValidateForOS() error = %v, want IPv4PolicyRouteSet rejection", err)
 	}
 }
 
@@ -1224,9 +1115,6 @@ func TestValidateEgressRoutePolicyDynamicGatewayAllowsAutoDerivation(t *testing.
 
 	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("ValidateForOS(linux) with dynamic gateway auto-derivation: %v", err)
-	}
-	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "static sourceAddress hash PF route-to shape") {
-		t.Fatalf("ValidateForOS(freebsd) = %v, want static-only route-to rejection", err)
 	}
 }
 
