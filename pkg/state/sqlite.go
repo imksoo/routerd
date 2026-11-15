@@ -91,10 +91,6 @@ PRAGMA wal_checkpoint(TRUNCATE);
 		_ = db.Close()
 		return nil, err
 	}
-	if err := store.migrateLegacyJSON(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	if err := store.loadEventJournalUsage(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -163,9 +159,19 @@ CREATE TABLE IF NOT EXISTS events (
   reason TEXT NOT NULL,
   message TEXT NOT NULL,
   generation INTEGER,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  topic TEXT,
+  source_kind TEXT,
+  source_instance TEXT,
+  resource_api_version TEXT,
+  resource_kind TEXT,
+  resource_name TEXT,
+  severity TEXT,
+  attributes TEXT
 );
 CREATE INDEX IF NOT EXISTS events_type ON events(type, id);
+CREATE INDEX IF NOT EXISTS events_topic ON events(topic, id);
+CREATE INDEX IF NOT EXISTS events_resource ON events(resource_kind, resource_name, id);
 CREATE TABLE IF NOT EXISTS event_consumer_cursors (
   consumer TEXT PRIMARY KEY,
   cursor INTEGER NOT NULL,
@@ -230,6 +236,7 @@ CREATE TABLE IF NOT EXISTS event_deliveries (
   last_attempt_at INTEGER,
   last_error TEXT,
   delivered_at INTEGER,
+  event_expires_at INTEGER,
   UNIQUE(event_id, peer)
 );
 CREATE INDEX IF NOT EXISTS event_deliveries_peer ON event_deliveries(peer, status);
@@ -268,164 +275,14 @@ CREATE TABLE IF NOT EXISTS action_executions (
   result_message TEXT,
   error TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  observed_json TEXT
 );
 CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
 `); err != nil {
 		return err
 	}
-	if err := s.migrateLegacyStateTable(); err != nil {
-		return err
-	}
-	if err := s.ensureObjectColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureEventColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureGenerationColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureDynamicConfigPartColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureActionExecutionColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureEventDeliveryColumns(); err != nil {
-		return err
-	}
 	return nil
-}
-
-// ensureDynamicConfigPartColumns additively adds columns introduced after the
-// dynamic_config_parts table shipped, so existing databases upgrade in place.
-func (s *SQLiteStore) ensureDynamicConfigPartColumns() error {
-	columns := map[string]string{
-		// actionplans_json persists plugin-proposed, display-only ActionPlans so
-		// EventSubscription-driven runs stay reviewable. routerd never executes
-		// them; missing/empty column simply means no action plans.
-		"actionplans_json": "TEXT",
-		// mobility_dataplane_json is the typed internal desired-state channel
-		// from mobility planning to the local SAM dataplane.
-		"mobility_dataplane_json": "TEXT",
-		// arp_observer_intents_json is the typed internal bootstrap channel from
-		// normalized on-prem mobility discovery to the ARP observer supervisor.
-		"arp_observer_intents_json": "TEXT",
-		"fib_verdicts_json":         "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("dynamic_config_parts", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE dynamic_config_parts ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureGenerationColumns() error {
-	columns := map[string]string{
-		"config_yaml": "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("generations", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE generations ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureEventColumns() error {
-	columns := map[string]string{
-		"topic":                "TEXT",
-		"source_kind":          "TEXT",
-		"source_instance":      "TEXT",
-		"resource_api_version": "TEXT",
-		"resource_kind":        "TEXT",
-		"resource_name":        "TEXT",
-		"severity":             "TEXT",
-		"attributes":           "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("events", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE events ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	_, err := s.db.Exec(`
-CREATE INDEX IF NOT EXISTS events_topic ON events(topic, id);
-CREATE INDEX IF NOT EXISTS events_resource ON events(resource_kind, resource_name, id);
-`)
-	return err
-}
-
-func (s *SQLiteStore) ensureObjectColumns() error {
-	hasLastAppliedPath, err := s.tableHasColumn("objects", "last_applied_path")
-	if err != nil {
-		return err
-	}
-	if !hasLastAppliedPath {
-		if _, err := s.db.Exec(`ALTER TABLE objects ADD COLUMN last_applied_path TEXT`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) migrateLegacyStateTable() error {
-	exists, err := s.tableExists("state")
-	if err != nil || !exists {
-		return err
-	}
-	rows, err := s.db.Query(`SELECT key,coalesce(value,''),status,coalesce(reason,''),since,updated_at FROM state ORDER BY key`)
-	if err != nil {
-		return err
-	}
-	type legacyState struct {
-		key   string
-		value Value
-	}
-	var legacyRows []legacyState
-	for rows.Next() {
-		var key, since, updated string
-		var value Value
-		if err := rows.Scan(&key, &value.Value, &value.Status, &value.Reason, &since, &updated); err != nil {
-			return err
-		}
-		value.Since, _ = time.Parse(time.RFC3339Nano, since)
-		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
-		legacyRows = append(legacyRows, legacyState{key: key, value: value})
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, row := range legacyRows {
-		if err := s.put(row.key, row.value); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.Exec(`DROP TABLE state`)
-	return err
 }
 
 func (s *SQLiteStore) tableExists(name string) (bool, error) {
@@ -435,55 +292,6 @@ func (s *SQLiteStore) tableExists(name string) (bool, error) {
 		return false, nil
 	}
 	return err == nil, err
-}
-
-func (s *SQLiteStore) tableHasColumn(table, column string) (bool, error) {
-	exists, err := s.tableExists(table)
-	if err != nil || !exists {
-		return false, err
-	}
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notnull, pk int
-		var dflt any
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
-}
-
-func (s *SQLiteStore) migrateLegacyJSON() error {
-	legacy := filepath.Join(filepath.Dir(s.path), "state.json")
-	if _, err := os.Stat(legacy); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM objects`).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return nil
-	}
-	jsonStore, err := LoadJSON(legacy)
-	if err != nil {
-		return err
-	}
-	for key, value := range jsonStore.Variables() {
-		if err := s.put(key, value); err != nil {
-			return err
-		}
-	}
-	return os.Rename(legacy, legacy+".migrated")
 }
 
 func (s *SQLiteStore) Save(path string) error { return nil }

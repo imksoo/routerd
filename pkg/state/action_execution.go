@@ -69,21 +69,6 @@ type ActionExecutionFilter struct {
 	Provider string
 }
 
-// ensureActionExecutionColumns adds the observed facts column to existing databases.
-func (s *SQLiteStore) ensureActionExecutionColumns() error {
-	// The executor records observed facts such as priorSourceDestCheck here.
-	hasObserved, err := s.tableHasColumn("action_executions", "observed_json")
-	if err != nil {
-		return err
-	}
-	if !hasObserved {
-		if _, err := s.db.Exec(`ALTER TABLE action_executions ADD COLUMN observed_json TEXT`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ImportAction inserts an action into the journal as pending, keyed by its
 // idempotency key. A repeated key never creates a duplicate execution row.
 // Already-succeeded rows remain idempotent. Failed or skipped rows are requeued

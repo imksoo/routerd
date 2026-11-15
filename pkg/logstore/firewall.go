@@ -255,10 +255,11 @@ CREATE INDEX IF NOT EXISTS expired_flows_ts ON expired_flows(ts);
 CREATE INDEX IF NOT EXISTS expired_flows_reply ON expired_flows(protocol, reply_src, reply_dst, reply_src_port, reply_dst_port, ts);
 CREATE INDEX IF NOT EXISTS dpi_flow_tuple ON dpi_flow(protocol, src_address, dst_address, src_port, dst_port, ts_last);
 CREATE INDEX IF NOT EXISTS dpi_flow_reverse ON dpi_flow(protocol, dst_address, src_address, dst_port, src_port, ts_last);
+CREATE INDEX IF NOT EXISTS firewall_logs_dpi_app_ts ON firewall_logs(dpi_app, ts);
 `); err != nil {
 		return err
 	}
-	return l.ensureDPIColumns(ctx)
+	return nil
 }
 
 func (l *FirewallLog) Close() error {
@@ -412,102 +413,6 @@ ORDER BY bucket_start ASC`,
 		})
 	}
 	return out, nil
-}
-
-func (l *FirewallLog) ensureDPIColumns(ctx context.Context) error {
-	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(firewall_logs)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull int
-		var defaultValue any
-		var primaryKey int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, column := range []struct {
-		name string
-		typ  string
-	}{
-		{"dpi_app", "TEXT"},
-		{"tcp_flags", "TEXT"},
-		{"dpi_category", "TEXT"},
-		{"dpi_tls_sni", "TEXT"},
-		{"dpi_http_host", "TEXT"},
-		{"dpi_dns_query", "TEXT"},
-		{"dpi_confidence", "INTEGER"},
-		{"correlation", "TEXT"},
-		{"correlation_detail", "TEXT"},
-		{"expired_age_seconds", "INTEGER"},
-		{"expired_bytes", "INTEGER"},
-	} {
-		if existing[column.name] {
-			continue
-		}
-		if _, err := l.db.ExecContext(ctx, `ALTER TABLE firewall_logs ADD COLUMN `+column.name+` `+column.typ); err != nil {
-			return err
-		}
-	}
-	_, err = l.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS firewall_logs_dpi_app_ts ON firewall_logs(dpi_app, ts);`)
-	if err != nil {
-		return err
-	}
-	return l.ensureDPIFlowColumns(ctx)
-}
-
-func (l *FirewallLog) ensureDPIFlowColumns(ctx context.Context) error {
-	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(dpi_flow)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull int
-		var defaultValue any
-		var primaryKey int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, column := range []struct {
-		name string
-		typ  string
-	}{
-		{"engine", "TEXT"},
-		{"source", "TEXT"},
-		{"detected_protocol", "TEXT"},
-		{"master_protocol", "TEXT"},
-		{"application_protocol", "TEXT"},
-		{"category", "TEXT"},
-		{"risk", "TEXT"},
-		{"confidence", "INTEGER"},
-		{"metadata_json", "TEXT"},
-	} {
-		if existing[column.name] {
-			continue
-		}
-		if _, err := l.db.ExecContext(ctx, `ALTER TABLE dpi_flow ADD COLUMN `+column.name+` `+column.typ); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (l *FirewallLog) RecordExpiredFlow(ctx context.Context, flow ExpiredFlowEntry, ttl time.Duration, limit int) error {
@@ -739,10 +644,6 @@ func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([
 	if l == nil || l.db == nil {
 		return nil, nil
 	}
-	columns, err := tableColumns(ctx, l.db, "dpi_flow")
-	if err != nil {
-		return nil, err
-	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 1000
@@ -761,7 +662,7 @@ func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(detected_protocol,''),coalesce(master_protocol,''),coalesce(application_protocol,''),coalesce(category,''),coalesce(risk,''),coalesce(confidence,0),coalesce(metadata_json,''),coalesce(engine,''),coalesce(source,''),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
 FROM dpi_flow`+where+` ORDER BY ts_last DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -894,7 +795,7 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Invalid tuples have no match even when a legacy database has no DPI table.
+	// Invalid tuples have no match.
 	valid := false
 	for _, entry := range entries {
 		if strings.TrimSpace(entry.Protocol) != "" && entry.SrcAddress != "" && entry.DstAddress != "" {
@@ -906,10 +807,6 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 		return out, nil
 	}
 
-	columns, err := tableColumns(ctx, l.db, "dpi_flow")
-	if err != nil {
-		return nil, err
-	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -938,7 +835,7 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 		cutoff := now.Add(-ttl).UnixNano()
 		args = append(args, cutoff, cutoff)
 		query := `WITH requested(request_index,request_protocol,request_src,request_dst,request_src_port,request_dst_port) AS (VALUES ` + strings.Join(values, ",") + `)
-SELECT request_index,flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),` + optionalTextColumn(columns, "detected_protocol") + `,` + optionalTextColumn(columns, "master_protocol") + `,` + optionalTextColumn(columns, "application_protocol") + `,` + optionalTextColumn(columns, "category") + `,` + optionalTextColumn(columns, "risk") + `,` + optionalIntColumn(columns, "confidence") + `,` + optionalTextColumn(columns, "metadata_json") + `,` + optionalTextColumn(columns, "engine") + `,` + optionalTextColumn(columns, "source") + `,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+SELECT request_index,flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(detected_protocol,''),coalesce(master_protocol,''),coalesce(application_protocol,''),coalesce(category,''),coalesce(risk,''),coalesce(confidence,0),coalesce(metadata_json,''),coalesce(engine,''),coalesce(source,''),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
 FROM requested JOIN dpi_flow ON flow_id = (
  SELECT flow_id FROM (
   SELECT flow_id, ts_last FROM dpi_flow
@@ -1058,39 +955,4 @@ func jsonStringMap(value string) map[string]string {
 		return nil
 	}
 	return out
-}
-
-func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	columns := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull int
-		var defaultValue any
-		var primaryKey int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return nil, err
-		}
-		columns[name] = true
-	}
-	return columns, rows.Err()
-}
-
-func optionalTextColumn(columns map[string]bool, name string) string {
-	if columns[name] {
-		return "coalesce(" + name + ",'')"
-	}
-	return "''"
-}
-
-func optionalIntColumn(columns map[string]bool, name string) string {
-	if columns[name] {
-		return "coalesce(" + name + ",0)"
-	}
-	return "0"
 }
