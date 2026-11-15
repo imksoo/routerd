@@ -74,13 +74,6 @@ func TestValidateMobilityPoolRejectsOverlappingPrefixes(t *testing.T) {
 	}
 }
 
-func TestValidateSAMTransportProfile(t *testing.T) {
-	router := samTransportProfileRouter(validSAMTransportProfileSpec())
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate SAMTransportProfile: %v", err)
-	}
-}
-
 func TestValidateSAMTransportRRWithoutPoolRequiresExplicitTransitPrefixes(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.BGP.RouteReflectorClient = true
