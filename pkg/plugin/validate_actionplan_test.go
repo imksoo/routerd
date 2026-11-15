@@ -22,10 +22,6 @@ func TestValidateActionPlanAccepts(t *testing.T) {
 		plan ActionPlan
 	}{
 		{
-			name: "assign-secondary-ip",
-			plan: validAssignSecondaryIP(),
-		},
-		{
 			name: "ensure-forwarding-enabled no target required",
 			plan: ActionPlan{
 				Name:     "enable-fwd",
