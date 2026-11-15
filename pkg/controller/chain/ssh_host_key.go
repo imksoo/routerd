@@ -5,6 +5,8 @@ package chain
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"os"
@@ -47,19 +49,10 @@ func (c SSHHostKeyController) Reconcile(ctx context.Context) error {
 		path := "/etc/ssh/ssh_host_" + kind + "_key"
 		private := []byte(spec.PrivateKey)
 		public := ssh.MarshalAuthorizedKey(key.PublicKey())
-		current, err := os.ReadFile(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("read SSH host key: %w", err)
+		changed, err := sshHostKeyNeedsUpdate(path, private, key.PublicKey())
+		if err != nil {
+			return err
 		}
-		info, err := os.Stat(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat SSH host key: %w", err)
-		}
-		pub, err := os.ReadFile(path + ".pub")
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("read SSH host public key: %w", err)
-		}
-		changed := !bytes.Equal(current, private) || !bytes.Equal(pub, public) || info == nil || info.Mode().Perm() != 0600
 		if !changed || c.DryRun {
 			continue
 		}
@@ -94,6 +87,71 @@ func (c SSHHostKeyController) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("clear SSH reload marker: %w", err)
 	}
 	return nil
+}
+
+func sshHostKeyNeedsUpdate(path string, desired []byte, desiredPublic ssh.PublicKey) (bool, error) {
+	private, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read SSH host key: %w", err)
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat SSH host key: %w", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		return true, nil
+	}
+	currentKey, err := ssh.ParsePrivateKey(private)
+	if err != nil || !bytes.Equal(currentKey.PublicKey().Marshal(), desiredPublic.Marshal()) {
+		return true, nil
+	}
+	currentDER, err := sshPrivateKeyDER(private)
+	if err != nil {
+		return true, nil
+	}
+	desiredDER, err := sshPrivateKeyDER(desired)
+	if err != nil {
+		return false, fmt.Errorf("encode configured SSH host key: %w", err)
+	}
+	if !bytes.Equal(currentDER, desiredDER) {
+		return true, nil
+	}
+	public, err := os.ReadFile(path + ".pub")
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read SSH host public key: %w", err)
+	}
+	pubInfo, err := os.Stat(path + ".pub")
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat SSH host public key: %w", err)
+	}
+	if pubInfo.Mode().Perm()&0022 != 0 || pubInfo.Mode().Perm()&0400 == 0 {
+		return true, nil
+	}
+	key, _, options, rest, err := ssh.ParseAuthorizedKey(public)
+	return err != nil || len(options) != 0 || len(bytes.TrimSpace(rest)) != 0 || !bytes.Equal(key.Marshal(), desiredPublic.Marshal()), nil
+}
+
+func sshPrivateKeyDER(data []byte) ([]byte, error) {
+	key, err := ssh.ParseRawPrivateKey(data)
+	if err != nil {
+		return nil, err
+	}
+	if ed, ok := key.(*ed25519.PrivateKey); ok {
+		key = *ed
+	}
+	return x509.MarshalPKCS8PrivateKey(key)
 }
 
 func writeSSHKey(path string, data []byte, mode os.FileMode) error {
