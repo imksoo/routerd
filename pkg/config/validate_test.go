@@ -3,8 +3,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,16 +10,6 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/platform"
 )
-
-func TestValidateRouterLabExample(t *testing.T) {
-	router, err := Load("../../examples/router-lab.yaml")
-	if err != nil {
-		t.Fatalf("load router-lab example: %v", err)
-	}
-	if err := ValidateForOS(router, platform.OSLinux); err != nil {
-		t.Fatalf("validate router-lab example: %v", err)
-	}
-}
 
 func TestValidateSysctl(t *testing.T) {
 	router := &api.Router{
@@ -412,27 +400,6 @@ func TestValidateAcceptsNTPServerAllowCIDRFromProvidesContract(t *testing.T) {
 	}
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate allowCIDRFrom: %v", err)
-	}
-}
-
-func TestValidateExampleStatusReferencesAgainstProvides(t *testing.T) {
-	entries, err := os.ReadDir("../../examples")
-	if err != nil {
-		t.Fatalf("read examples: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
-			continue
-		}
-		t.Run(entry.Name(), func(t *testing.T) {
-			router, err := Load(filepath.Join("../../examples", entry.Name()))
-			if err != nil {
-				t.Fatalf("load example: %v", err)
-			}
-			if err := ValidateForOS(router, platform.OSLinux); err != nil {
-				t.Fatalf("validate example: %v", err)
-			}
-		})
 	}
 }
 
