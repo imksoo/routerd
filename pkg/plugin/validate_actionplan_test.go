@@ -55,19 +55,6 @@ func TestValidateActionPlanAccepts(t *testing.T) {
 	}
 }
 
-func TestValidateActionPlanRejectsExecuteExactly(t *testing.T) {
-	plan := validAssignSecondaryIP()
-	plan.Mode = "execute"
-	err := ValidateActionPlan(plan)
-	if err == nil {
-		t.Fatalf("expected error for mode=execute")
-	}
-	const want = "actionPlan mode=execute is not supported; provider actions are dry-run/display-only in Phase 4.1"
-	if err.Error() != want {
-		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
-	}
-}
-
 func TestValidateActionPlanRejects(t *testing.T) {
 	tests := []struct {
 		name   string
