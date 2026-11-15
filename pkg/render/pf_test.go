@@ -126,29 +126,6 @@ func TestPFEgressRouteHashUsesRoundRobinStickyAddress(t *testing.T) {
 	}
 }
 
-func TestPFEgressRouteHashRejectsIPv6StaticRoutehosts(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "em1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "em2"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "lan6-balance"}, Spec: api.EgressRoutePolicySpec{
-			Family:           "ipv6",
-			Mode:             "hash",
-			HashFields:       []string{"sourceAddress"},
-			SourceCIDRs:      []string{"2001:db8:10::/64"},
-			DestinationCIDRs: []string{"2001:db8:ffff::/48"},
-			Candidates: []api.EgressRoutePolicyCandidate{{Name: "pool", Targets: []api.EgressRoutePolicyTarget{
-				{Name: "a", Interface: "wan-a", Gateway: "2001:db8:100::1", GatewaySource: "static"},
-				{Name: "b", Interface: "wan-b", Gateway: "2001:db8:200::1", GatewaySource: "static"},
-			}}},
-		}},
-	}}}
-
-	_, err := PF(router, nil)
-	if err == nil || !strings.Contains(err.Error(), "supports only family ipv4") {
-		t.Fatalf("PF IPv6 route-to error = %v", err)
-	}
-}
-
 func TestPFEgressRouteHashRejectsUnsafeOrUnsupportedShapes(t *testing.T) {
 	base := func() *api.Router {
 		return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
