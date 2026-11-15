@@ -5,9 +5,13 @@
 package statusvalue
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"net/netip"
 	"strings"
+	"time"
 )
 
 // Text converts a status value to trimmed display text.
@@ -82,4 +86,23 @@ func Address(value string) string {
 		return prefix.Addr().String()
 	}
 	return value
+}
+
+// KeepUpdateTime preserves the last update time when all other fields match.
+func KeepUpdateTime(current, next map[string]any) {
+	stamp, ok := current["updatedAt"].(string)
+	if !ok {
+		return
+	}
+	if _, err := time.Parse(time.RFC3339Nano, stamp); err != nil {
+		return
+	}
+	oldFields, newFields := maps.Clone(current), maps.Clone(next)
+	delete(oldFields, "updatedAt")
+	delete(newFields, "updatedAt")
+	oldJSON, oldErr := json.Marshal(oldFields)
+	newJSON, newErr := json.Marshal(newFields)
+	if oldErr == nil && newErr == nil && bytes.Equal(oldJSON, newJSON) {
+		next["updatedAt"] = stamp
+	}
 }

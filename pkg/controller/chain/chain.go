@@ -3547,7 +3547,11 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 			}
 			next := copyStatusMap(base)
 			if daemonStatusObservedOnlyKind(observed.Resource.Kind) {
-				next = daemonObservedOnlyStatus(c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name), base, observed)
+				previous := c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name)
+				next = daemonObservedOnlyStatus(previous, base, observed)
+				if observed.Resource.Kind == "DNSResolver" && observed.Resource.APIVersion == api.NetAPIVersion {
+					statusvalue.KeepUpdateTime(previous, next)
+				}
 			} else {
 				for key, value := range observed.Observed {
 					next[key] = value
