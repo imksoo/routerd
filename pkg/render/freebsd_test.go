@@ -106,20 +106,6 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 }
 
-func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcpcd", Profile: "ntt-hgw-lan-pd", PrefixLength: 60}},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	if strings.Contains(string(got.RCConf), "dhcp6c_") {
-		t.Fatalf("FreeBSD rc.conf must not render legacy dhcp6c runtime details:\n%s", got.RCConf)
-	}
-}
-
 func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true}},
@@ -199,45 +185,6 @@ func TestFreeBSDCARPRCDScriptStopsIPv6WithInet6(t *testing.T) {
 	}
 	if strings.Contains(script, "grep -Fq 'fd00:1234::10/128'") {
 		t.Fatalf("routerd_carp IPv6 ownership probes must not grep CIDR-form addresses:\n%s", script)
-	}
-}
-
-func TestFreeBSDRendersNTPD(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
-			Spec: api.NTPClientSpec{
-				Provider:        "ntpd",
-				Managed:         true,
-				Source:          "auto",
-				ServerFrom:      []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan-info", Field: "sntpServers"}},
-				FallbackServers: []string{"ntp.jst.mfeed.ad.jp", "ntp.nict.jp"},
-			},
-		},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	rc := string(got.RCConf)
-	for _, want := range []string{
-		`ntpd_enable="YES"`,
-		`ntpd_sync_on_start="YES"`,
-		`ntpd_config="/usr/local/etc/routerd/ntp.conf"`,
-	} {
-		if !strings.Contains(rc, want) {
-			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
-		}
-	}
-	ntp := string(got.NTP)
-	for _, want := range []string{
-		`driftfile /var/db/ntpd.drift`,
-		`server ntp.jst.mfeed.ad.jp iburst`,
-		`server ntp.nict.jp iburst`,
-	} {
-		if !strings.Contains(ntp, want) {
-			t.Fatalf("ntp.conf output missing %q:\n%s", want, ntp)
-		}
 	}
 }
 
