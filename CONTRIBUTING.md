@@ -4,30 +4,21 @@ routerd is pre-release router control-plane software. Contributions are
 welcome, but changes that touch networking, firewalling, routing, installers,
 or host service management must be reviewed carefully.
 
+[AGENTS.md](AGENTS.md) holds the development rules for this repository,
+including the rules on tests, real-target validation, and commit messages.
+Where this file and AGENTS.md differ, AGENTS.md governs.
+
 ## Development setup
 
-Use Go 1.24 or newer. The Makefile is for development tasks:
+Use the Go version named in `go.mod`. The Makefile is for development tasks:
 
 ```sh
-make test
 make check-schema
 make validate-example
-make website-build
 ```
 
 End users install from release archives with `install.sh`. Do not add a second
 installer path to the Makefile.
-
-## Before opening a pull request
-
-Run:
-
-```sh
-make test
-make check-schema
-make validate-example
-make website-build
-```
 
 If you changed shell scripts, also run:
 
@@ -35,52 +26,35 @@ If you changed shell scripts, also run:
 shellcheck packaging/install.sh packaging/uninstall.sh scripts/*.sh
 ```
 
-If you changed resource API fields, regenerate schema:
+If you changed resource API fields, regenerate the schema and resource
+reference:
 
 ```sh
 make generate-schema
+make generate-resource-docs
 ```
 
-Enable the optional pre-commit hook if you want the local safety checks to run
-before every commit:
+Enable the commit-message hook in each clone:
 
 ```sh
-cp scripts/pre-commit.sh .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
+git config --local core.hooksPath .githooks
 ```
 
-## Provider executor changes
+## Tests and validation
 
-Provider executors mutate cloud control planes. Treat them as sharp edges: a
-small command-order or request-body change can pass local compile checks while
-breaking an already-working lab and spending cloud budget during diagnosis.
+Do not add mocks, fakes, simulators, recorded responses, or substitute network
+environments. Do not add or expand test code without the owner's prior approval
+for that specific test. Validate behavior on the real targets and their real
+peers, and state honestly what was not checked.
 
-Follow this order for provider executor changes:
-
-1. Write local ARM/API mock tests first when touching provider mutations. Use
-   `httptest`, SDK fakes, or recorded responses to prove the request body,
-   operation sequence, idempotent no-op behavior, and post-write verify order.
-2. Do not use cloud e2e as a debugging loop. Cloud e2e is a final pass/fail gate
-   after local tests explain the expected provider API behavior. If it fails,
-   stop and bring the failure back to local reproduction.
-3. Keep e2e gate script changes separate from implementation changes. A PR that
-   changes provider executor behavior must not also change the test harness that
-   judges it.
-
-This rule exists because a PR #709 follow-up attempted to coalesce Azure NIC
-secondary-IP assignment and IP forwarding into a direct ARM PUT without first
-pinning the PUT body and verify sequence in local tests. The change regressed an
-executor path that had already worked through the Azure CLI, and cloud e2e became
-the diagnosis loop. Future provider executor work must prove API semantics
-locally before spending a real-cloud validation run.
+Provider executors mutate cloud control planes. Do not use chargeable cloud
+runs as a debugging loop.
 
 ## Design expectations
 
 - Keep YAML intuitive and explicit.
 - Prefer a typed resource over hidden host state or ad hoc commands.
-- Keep Linux, NixOS, and FreeBSD differences behind platform renderers.
-- Do not mutate host networking in normal unit tests.
-- Use isolated network namespace tests for Linux network changes.
+- Keep Linux and FreeBSD differences behind platform renderers.
 - Do not add remote plugin installation or a plugin registry without a separate
   design discussion.
 
@@ -90,13 +64,17 @@ Update public docs when behavior changes:
 
 - `README.md`
 - `README.ja.md`
-- `docs/`
-- `website/i18n/ja/docusaurus-plugin-content-docs/current/`
+- `docs/` in all four languages
+
+The Markdown under `docs/` is the source. Rendered HTML is not committed;
+`website/build.sh` generates it when the site is published.
 
 ## Commit style
 
 Use small commits with direct messages. Prefer one behavioral change per commit
-when practical. Release commits are created by `scripts/release.sh`.
+when practical. Each commit message carries the Rule-Check, Scope-Check,
+Validation, and Cleanup explanations described in AGENTS.md. Release commits
+are created by `scripts/release.sh`.
 
 ## License
 

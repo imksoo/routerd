@@ -21,6 +21,9 @@ Keep its existing code and shared SAM dependencies intact; shelving is not a
 request to remove functionality. Local SAM/IPIP/BGP used by k8s-rt and pve-rt
 remains in scope. If Cloud SAM is explicitly resumed, use
 nwadmin03.lain.local:/home/imksoo/routerd-labs as a reference and minimize cost.
+A Kind that appears in none of the listed hosts' configurations may belong to
+shelved Cloud SAM. Absence from those configurations alone does not make a Kind
+removable; removing a Kind needs the owner's decision for that Kind.
 
 This file contains standing rules, not a replayable work queue. Completed MVPs,
 plans, and historical audit verdicts must not become new tasks.
@@ -68,6 +71,14 @@ These prohibitions apply retroactively. Remove existing prohibited tests and
 their test-only adapters, fixtures, abstractions, and CI work. Do not repair
 them merely to preserve a green suite. Preserve production dependencies.
 
+Thin coverage is not a reason to add tests. Work on existing tests means
+selecting the few that pin a real contract or a demonstrated fault and removing
+the rest; it does not mean replacing removed tests or filling gaps. Candidates
+for removal include assertions on error-message wording or rendered-output
+substrings, checks that a configuration is merely accepted when
+`make validate-example` already validates it with the real binary, and tests
+for a platform that no real target runs.
+
 Do not impose an arbitrary test deadline or elapsed-time assertion. A timing
 failure needs an explicit product requirement, protocol rule, or demonstrated
 fault. Twelve-second success is not failure because a test author chose ten
@@ -86,6 +97,14 @@ unused arguments. Do not introduce speculative compatibility, fallback chains,
 universal engines, test-only product hooks, or receipt frameworks.
 Retain the leases, identities, deadlines, and exclusion needed by real
 protocols and configured HA/SAM operation. Do not hide OS or process errors.
+
+## Documentation
+
+The Markdown under `docs/` is the source for all four languages. Keep them
+aligned. Do not commit rendered HTML; `website/build.sh` renders it when the
+site is published. After changing a Kind or its fields, run
+`make generate-schema` and `make generate-resource-docs` and commit the
+results. A documentation change does not require a product build or an ISO.
 
 ## Working discipline
 
