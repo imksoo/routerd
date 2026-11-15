@@ -30,8 +30,13 @@ type Router struct {
 }
 
 type RouterSpec struct {
-	Apply     ApplyPolicySpec `yaml:"reconcile,omitempty" json:"reconcile,omitempty"`
-	Resources []Resource      `yaml:"resources" json:"resources"`
+	SSHHostKeys []SSHHostKeySpec `yaml:"sshHostKeys,omitempty" json:"sshHostKeys,omitempty"`
+	Apply       ApplyPolicySpec  `yaml:"reconcile,omitempty" json:"reconcile,omitempty"`
+	Resources   []Resource       `yaml:"resources" json:"resources"`
+}
+
+type SSHHostKeySpec struct {
+	PrivateKey string `yaml:"privateKey" json:"privateKey"`
 }
 
 type Resource struct {

@@ -68,6 +68,31 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
+	// Protect the main file before SQLite can create a journal or WAL. SQLite
+	// inherits its mode for newly created WAL, journal and shared-memory
+	// files, including files recreated after the last close.
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	// SQLite places sidecars beside the resolved database, not its symlink.
+	dbPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if err := os.Chmod(dbPath+suffix, 0600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("protect state file %s: %w", dbPath+suffix, err)
+		}
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err

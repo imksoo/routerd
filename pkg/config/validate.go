@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -22,6 +24,24 @@ import (
 
 func Validate(router *api.Router) error {
 	return ValidateForOS(router, platform.CurrentOS())
+}
+
+// SSHHostKey validates a host key and returns its standard OpenSSH file suffix.
+func SSHHostKey(private string) (string, ssh.Signer, error) {
+	key, err := ssh.ParsePrivateKey([]byte(private))
+	if err != nil {
+		return "", nil, fmt.Errorf("privateKey must be a valid unencrypted SSH private key")
+	}
+	switch key.PublicKey().Type() {
+	case ssh.KeyAlgoED25519:
+		return "ed25519", key, nil
+	case ssh.KeyAlgoRSA:
+		return "rsa", key, nil
+	case ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521:
+		return "ecdsa", key, nil
+	default:
+		return "", nil, fmt.Errorf("privateKey must be an Ed25519, RSA, or ECDSA key")
+	}
 }
 
 func ValidateForOS(router *api.Router, targetOS platform.OS) error {
@@ -49,6 +69,17 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 	}
 	if router.Metadata.Name == "" {
 		return fmt.Errorf("router metadata.name is required")
+	}
+	seenSSHKeys := map[string]bool{}
+	for i, key := range router.Spec.SSHHostKeys {
+		kind, _, err := SSHHostKey(key.PrivateKey)
+		if err != nil {
+			return fmt.Errorf("spec.sshHostKeys[%d]: %w", i, err)
+		}
+		if seenSSHKeys[kind] {
+			return fmt.Errorf("spec.sshHostKeys[%d]: duplicate %s host key", i, kind)
+		}
+		seenSSHKeys[kind] = true
 	}
 	if err := validateApplyPolicy(router.Spec.Apply); err != nil {
 		return err
