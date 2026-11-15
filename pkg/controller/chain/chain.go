@@ -1633,7 +1633,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	// copying Runner: Runner owns synchronization and runtime state.
 	packages := PackageController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
-	sshHostKey := SSHHostKeyController{Router: r.currentRouter(), DryRun: opts.DryRunSysctl}
+	sshHostKey := SSHHostKeyController{Router: r.currentRouter(), DryRun: r.Opts.DryRunSysctl}
 	hostname := HostnameController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunSysctl}
 	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
