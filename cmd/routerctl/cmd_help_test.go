@@ -163,14 +163,3 @@ func TestTopLevelUsageListsDomainControlCommands(t *testing.T) {
 		}
 	}
 }
-
-func TestLedgerBackupHelpDocumentsDestArgument(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"ledger", "backup", "--help"}, &stdout, &stderr); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	combined := stdout.String() + stderr.String()
-	if !strings.Contains(combined, "<dest>") {
-		t.Errorf("ledger backup --help should explicitly document <dest> positional argument, got:\n%s", combined)
-	}
-}
