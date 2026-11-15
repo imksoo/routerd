@@ -278,18 +278,6 @@ func TestPublishObservationIgnoresSAMMemberMACAtChokepoint(t *testing.T) {
 	}
 }
 
-func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func buildARPReplyForTest(senderMAC, senderIP, targetMAC, targetIP string) []byte {
 	srcMAC := mustMACForTest(senderMAC)
 	dstMAC := mustMACForTest(targetMAC)

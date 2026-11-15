@@ -384,15 +384,6 @@ func TestHandlerClientSnapshotIgnoresStaleIPBasedFingerprints(t *testing.T) {
 	}
 }
 
-func assertNoSentinels(t *testing.T, text string, sentinels []string) {
-	t.Helper()
-	for _, sentinel := range sentinels {
-		if strings.Contains(text, sentinel) {
-			t.Fatalf("response leaked %q:\n%s", sentinel, text)
-		}
-	}
-}
-
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

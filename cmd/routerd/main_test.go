@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/netip"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
@@ -75,15 +73,6 @@ func TestRouterWithDryRunLeaseFilesKeepsDHCPLeaseStateInArtifacts(t *testing.T) 
 	if original.LeaseFile != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
 		t.Fatalf("dry-run mutated input lease file = %q", original.LeaseFile)
 	}
-}
-
-func findApplyResult(result *apply.Result, id string) *apply.ResourceResult {
-	for i := range result.Resources {
-		if result.Resources[i].ID == id {
-			return &result.Resources[i]
-		}
-	}
-	return nil
 }
 
 func TestManagementPlaneBlocksNonDryRunApply(t *testing.T) {
@@ -601,41 +590,6 @@ func TestControllerResourceKindsUseCanonicalNames(t *testing.T) {
 	if !reflect.DeepEqual(kinds, []string{"DHCPv6Server", "IPv6RouterAdvertisement"}) {
 		t.Fatalf("dhcpv6 resource kinds = %v", kinds)
 	}
-}
-
-func dynamicConfigPartRecordForCleanupTest(t *testing.T, source string, resources []api.Resource, expiresAt time.Time) routerstate.DynamicConfigPartRecord {
-	t.Helper()
-	raw, err := json.Marshal(resources)
-	if err != nil {
-		t.Fatalf("marshal resources: %v", err)
-	}
-	return routerstate.DynamicConfigPartRecord{
-		Source:        source,
-		Generation:    1,
-		ObservedAt:    time.Now().UTC(),
-		ExpiresAt:     expiresAt,
-		Digest:        source + "-digest",
-		ResourcesJSON: string(raw),
-		Status:        "active",
-	}
-}
-
-func stringSliceContains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func stringSliceContainsPrefix(values []string, prefix string) bool {
-	for _, value := range values {
-		if strings.HasPrefix(value, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestParseDHCPCDDumpLeasePD(t *testing.T) {

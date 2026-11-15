@@ -77,15 +77,6 @@ func TestNftablesNAT44RuleCanExcludeDestinations(t *testing.T) {
 	}
 }
 
-func bridgeVXLANL2MSSRouter(enabled bool) *api.Router {
-	return &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "l2"}, Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500, Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br"}, Spec: api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MTU: 1500}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "underlay"}, Spec: api.InterfaceSpec{IfName: "underlay0", MTU: 1500, Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", MTU: 1280, Bridge: "br", TCPMSSClamp: enabled}},
-	}}}
-}
-
 func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
@@ -128,46 +119,6 @@ func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 	if strings.Contains(got, "meta nfproto ipv6") {
 		t.Fatalf("BGP mobility MSS clamp should be IPv4-only:\n%s", got)
 	}
-}
-
-func nftablesStatefulFirewallTestRouter() *api.Router {
-	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "web"}, Spec: api.FirewallRuleSpec{
-			FromZone:         "wan",
-			ToZone:           "self",
-			Protocol:         "tcp",
-			SourcePorts:      []api.FirewallPort{"1024-65535"},
-			DestinationPorts: []api.FirewallPort{"80", "443"},
-			Action:           "accept",
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "echo"}, Spec: api.FirewallRuleSpec{
-			FromZone: "wan",
-			ToZone:   "self",
-			Protocol: "icmp",
-			ICMPType: "echo-request",
-			Action:   "accept",
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "ssh-flood"}, Spec: api.FirewallRuleSpec{
-			FromZone:         "wan",
-			ToZone:           "self",
-			Protocol:         "tcp",
-			DestinationPorts: []api.FirewallPort{"22"},
-			Action:           "reject",
-			RateLimit:        api.FirewallRateLimitSpec{Rate: 8, Burst: 16, Unit: "packet", Per: "minute", Log: true},
-			ConnLimit:        api.FirewallConnLimitSpec{MaxPerSource: 4, Log: true},
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "nd"}, Spec: api.FirewallRuleSpec{
-			FromZone:   "lan",
-			ToZone:     "self",
-			Protocol:   "icmpv6",
-			ICMPv6Type: "neighbor-solicit",
-			Action:     "accept",
-		}},
-	}}}
 }
 
 func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
