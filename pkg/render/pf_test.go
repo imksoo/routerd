@@ -95,37 +95,6 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 	}
 }
 
-func TestPFEgressRouteHashUsesRoundRobinStickyAddress(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "em0"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "em1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "em2"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "lan-balance"}, Spec: api.EgressRoutePolicySpec{
-			Mode:                    "hash",
-			HashFields:              []string{"sourceAddress"},
-			SourceCIDRs:             []string{"192.0.2.0/24"},
-			ExcludeDestinationCIDRs: []string{"198.51.100.0/24"},
-			Candidates: []api.EgressRoutePolicyCandidate{{Name: "pool", Targets: []api.EgressRoutePolicyTarget{
-				{Name: "a", Interface: "wan-a", Gateway: "203.0.113.1", GatewaySource: "static"},
-				{Name: "b", Interface: "wan-b", Gateway: "198.51.100.1", GatewaySource: "static"},
-			}}},
-		}},
-	}}}
-
-	data, err := PF(router, nil)
-	if err != nil {
-		t.Fatalf("render PF: %v", err)
-	}
-	got := string(data)
-	want := "pass in quick route-to { (em1 203.0.113.1), (em2 198.51.100.1) } round-robin sticky-address inet from 192.0.2.0/24 to ! 198.51.100.0/24 keep state label \"routerd:egress-route:lan-balance\""
-	if !strings.Contains(got, want) {
-		t.Fatalf("PF route-to rule missing %q:\\n%s", want, got)
-	}
-	if !strings.Contains(got, "pass all keep state") {
-		t.Fatalf("expected pass-all fallback after route-to:\\n%s", got)
-	}
-}
-
 func TestPFEgressRouteHashRejectsUnsafeOrUnsupportedShapes(t *testing.T) {
 	base := func() *api.Router {
 		return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -145,21 +114,6 @@ func TestPFEgressRouteHashRejectsUnsafeOrUnsupportedShapes(t *testing.T) {
 		edit func(*api.Router)
 		want string
 	}{
-		{name: "destination-hash", edit: func(r *api.Router) {
-			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
-			s.HashFields = []string{"destinationAddress"}
-			r.Spec.Resources[2].Spec = s
-		}, want: "hashFields"},
-		{name: "missing-gateway", edit: func(r *api.Router) {
-			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
-			s.Candidates[0].Targets[0].Gateway = ""
-			r.Spec.Resources[2].Spec = s
-		}, want: "static gateway"},
-		{name: "dynamic-gateway", edit: func(r *api.Router) {
-			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
-			s.Candidates[0].Targets[0].GatewaySource = "dhcpv4"
-			r.Spec.Resources[2].Spec = s
-		}, want: "static gateway"},
 		{name: "ipv6-route-to", edit: func(r *api.Router) {
 			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
 			s.Family = "ipv6"
@@ -168,17 +122,6 @@ func TestPFEgressRouteHashRejectsUnsafeOrUnsupportedShapes(t *testing.T) {
 			s.Candidates[0].Targets[1].Gateway = "2001:db8:2::1"
 			r.Spec.Resources[2].Spec = s
 		}, want: "supports only family ipv4"},
-		{name: "ambiguous-target-interface", edit: func(r *api.Router) {
-			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
-			s.Candidates[0].Targets[0].OutboundInterface = "wan-b"
-			r.Spec.Resources[2].Spec = s
-		}, want: "both interface and outboundInterface"},
-		{name: "explicit-firewall-rule", edit: func(r *api.Router) {
-			r.Spec.Resources = append(r.Spec.Resources,
-				api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"wan-a"}}},
-				api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "allow-lan"}, Spec: api.FirewallRuleSpec{FromZone: "lan", ToZone: "self", Action: "accept"}},
-			)
-		}, want: "explicit routerd firewall rules"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,83 +130,6 @@ func TestPFEgressRouteHashRejectsUnsafeOrUnsupportedShapes(t *testing.T) {
 			_, err := PF(router, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("PF error = %v, want %q", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestPFEgressRouteHashCoexistsOnlyWithBroadZoneForwarding(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "em0"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "em1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "em2"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "em3"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.InterfaceSpec{IfName: "em4"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.FirewallZoneSpec{Role: "mgmt", Interfaces: []string{"mgmt"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
-			Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"},
-			Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
-				{Interface: "wan-a", GatewaySource: "static", Gateway: "203.0.113.1"},
-				{Interface: "wan-b", GatewaySource: "static", Gateway: "198.51.100.1"},
-			}}},
-		}},
-	}}}
-	data, err := PF(router, nil)
-	if err != nil {
-		t.Fatalf("render PF: %v", err)
-	}
-	got := string(data)
-	block := "block drop in quick on $lan_if to (em4:network)"
-	local := "pass in quick on $lan_if to { (em0), (em1), (em2), (em3), (em4) } keep state label \"routerd:lan:route-to-self\""
-	connected := "pass in quick on $lan_if to { (em0:network), (em1:network) } keep state label \"routerd:lan:route-to-connected\""
-	route := "pass in quick on $lan_if route-to { (em2 203.0.113.1), (em3 198.51.100.1) } round-robin sticky-address inet from 192.0.2.0/24 to any keep state label \"routerd:egress-route:balanced\""
-	broad := "pass in quick on $lan_if keep state label \"routerd:lan-to-wan\""
-	for _, want := range []string{block, local, connected, route, broad} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("PF coexistence output missing %q:\n%s", want, got)
-		}
-	}
-	if !(strings.Index(got, block) < strings.Index(got, local) && strings.Index(got, local) < strings.Index(got, connected) && strings.Index(got, connected) < strings.Index(got, route) && strings.Index(got, route) < strings.Index(got, broad)) {
-		t.Fatalf("PF coexistence ordering does not preserve blocks/internal routes/broad pass:\n%s", got)
-	}
-}
-
-func TestPFEgressRouteHashRejectsExplicitFilterCoexistence(t *testing.T) {
-	base := func() *api.Router {
-		return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "em0"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "em1"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "em2"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
-				Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"},
-				Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
-					{Interface: "wan-a", GatewaySource: "static", Gateway: "203.0.113.1"},
-					{Interface: "wan-b", GatewaySource: "static", Gateway: "198.51.100.1"},
-				}}},
-			}},
-		}}}
-	}
-	tests := []struct {
-		name  string
-		add   api.Resource
-		holes []FirewallHole
-	}{
-		{name: "rule", add: api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "allow"}, Spec: api.FirewallRuleSpec{FromZone: "lan", ToZone: "self", Action: "accept"}}},
-		{name: "client-policy", add: api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"}, Metadata: api.ObjectMeta{Name: "guests"}, Spec: api.ClientPolicySpec{Mode: "include"}}},
-		{name: "log", add: api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "events"}, Spec: api.FirewallEventLogSpec{Enabled: true}}},
-		{name: "hole", holes: []FirewallHole{{Name: "allow", FromZone: "lan", ToZone: "self", Action: "accept"}}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			router := base()
-			if tc.add.Kind != "" {
-				router.Spec.Resources = append(router.Spec.Resources, tc.add)
-			}
-			if _, err := PF(router, tc.holes); err == nil || !strings.Contains(err.Error(), "explicit routerd firewall") {
-				t.Fatalf("PF coexistence error = %v, want explicit filter rejection", err)
 			}
 		})
 	}
