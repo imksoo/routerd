@@ -413,27 +413,6 @@ func TestValidateMobilityPoolRejectsInvalidMembersFrom(t *testing.T) {
 	}
 }
 
-func TestValidateSAMNodeSet(t *testing.T) {
-	router := samNodeSetRouter(api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{{
-		NodeRef:        "pve-rt01",
-		Site:           "pve01",
-		Role:           "onprem",
-		EventEndpoint:  "http://10.99.0.11:9443",
-		SAMEndpoint:    "10.99.0.11",
-		MACAddresses:   []string{"02:00:00:00:00:aa", "02:00:00:00:00:bb"},
-		RouteReflector: true,
-		WireGuard: api.SAMNodeWireGuardSpec{
-			PublicKey:           "pubkey",
-			Endpoint:            "pve-rt01.example.net:51820",
-			AllowedIPs:          []string{"10.99.0.11/32"},
-			PersistentKeepalive: 25,
-		},
-	}}})
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate SAMNodeSet: %v", err)
-	}
-}
-
 func TestValidateSAMNodeSetPlacementAndCapacity(t *testing.T) {
 	valid := validSAMNodeSetSpec()
 	valid.Nodes[0].Role = "cloud"
