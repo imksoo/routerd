@@ -3,6 +3,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -737,20 +739,23 @@ func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, e
 	if err != nil {
 		return false, err
 	}
-	current := objectStatus{}
-	if strings.TrimSpace(raw) != "" {
-		if err := json.Unmarshal([]byte(raw), &current); err != nil {
-			return false, nil
-		}
-	}
-	currentData, _ := json.Marshal(current)
-	if string(currentData) != string(next) {
+	if !statusJSONEqual([]byte(raw), next) {
 		return false, nil
 	}
 	if s.generation == 0 {
 		return !generation.Valid, nil
 	}
 	return generation.Valid && generation.Int64 == s.generation, nil
+}
+
+// statusJSONEqual ignores JSON object field order without rounding numbers.
+func statusJSONEqual(a, b []byte) bool {
+	var left, right any
+	first := json.NewDecoder(bytes.NewReader(a))
+	first.UseNumber()
+	second := json.NewDecoder(bytes.NewReader(b))
+	second.UseNumber()
+	return first.Decode(&left) == nil && second.Decode(&right) == nil && reflect.DeepEqual(left, right)
 }
 
 func nullGeneration(generation int64) any {

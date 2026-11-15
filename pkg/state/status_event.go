@@ -104,7 +104,7 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	if err != nil {
 		return nil, err
 	}
-	sameStatus := found && string(currentData) == string(data)
+	sameStatus := found && statusJSONEqual(currentData, data)
 	sameGeneration := (!generation.Valid && s.generation == 0) || (s.generation != 0 && generation.Valid && generation.Int64 == s.generation)
 	if sameStatus && sameGeneration {
 		s.statusSkipCount++
