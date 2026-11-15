@@ -24,6 +24,7 @@ import (
 type serveConfigMutator struct {
 	configPath           string
 	statePath            string
+	stateStore           *routerstate.SQLiteStore
 	baseOpts             applyOptions
 	cache                *resultCache
 	logger               *eventlog.Logger

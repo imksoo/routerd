@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -917,6 +918,7 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 		policy.status["updatedAt"] = now.Format(time.RFC3339Nano)
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.name)
 		c.addHADatapathStatus(policy.name, policy.active, previous, policy.status, now)
+		statusvalue.KeepUpdateTime(previous, policy.status)
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.name, policy.status); err != nil {
 			return err
 		}

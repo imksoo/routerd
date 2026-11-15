@@ -98,6 +98,7 @@ type Controller struct {
 	desiredPeerKeys          map[string]desiredPeer
 	appliedPeerKeys          map[string]desiredPeer
 	appliedConfig            bgpdaemon.AppliedConfig
+	persistedHash            string
 	importPolicyKey          string
 	pendingImportPolicyReset bool
 	// retiringDirectPeerAddresses is persisted before removal so routerd-bgp
@@ -225,6 +226,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPAppliedStateUnavailable", err)
 	}
+	loadedHash := bgpdaemon.Hash(applied)
 	c.hydrateAppliedState(applied)
 	desired, err := c.desiredPeers(routerResource.Metadata.Name, routerSpec.ASN)
 	if err != nil {
@@ -302,8 +304,13 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	appliedSpec := routerSpec
 	appliedSpec.ImportPolicy = effectiveImportPolicy
 	applied = c.buildAppliedConfig(appliedSpec, desired, advertisedPrefixes(routerSpec), applied.Paths)
-	if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
-		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
+	// Skip only after this controller has confirmed a durable write and both
+	// the freshly loaded state and any transition fences still agree.
+	appliedHash := bgpdaemon.Hash(applied)
+	if appliedHash == "" || appliedHash != c.persistedHash || appliedHash != loadedHash || appliedHash != bgpdaemon.Hash(c.appliedConfig) {
+		if err := c.persistAppliedConfig(ctx, applied); err != nil {
+			return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
+		}
 	}
 	c.appliedConfig = applied
 	allowedImportPrefixes := importAllowedPrefixesFromAppliedAndDynamic(applied, desiredDynamic)
@@ -335,7 +342,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 			// re-evaluated, otherwise the next ordinary reconcile would perform a
 			// redundant inbound reset.
 			applied.PendingImportPolicyReset = false
-			if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
+			if err := c.persistAppliedConfig(ctx, applied); err != nil {
 				return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
 			}
 			c.appliedConfig = applied
@@ -382,6 +389,7 @@ func (c *Controller) stopServerLocked() {
 	c.desiredPeerKeys = nil
 	c.appliedPeerKeys = nil
 	c.appliedConfig = bgpdaemon.AppliedConfig{}
+	c.persistedHash = ""
 	c.importPolicyKey = ""
 	c.pendingImportPolicyReset = false
 	c.retiringDirectPeerAddresses = nil
@@ -556,6 +564,15 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+func (c *Controller) persistAppliedConfig(ctx context.Context, config bgpdaemon.AppliedConfig) error {
+	if err := c.Server.SaveAppliedConfig(ctx, config); err != nil {
+		c.persistedHash = ""
+		return err
+	}
+	c.persistedHash = bgpdaemon.Hash(config)
+	return nil
 }
 
 func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
@@ -897,7 +914,7 @@ func (c *Controller) persistPendingImportPolicyReset(ctx context.Context) error 
 	}
 	pending := c.appliedConfig
 	pending.PendingImportPolicyReset = true
-	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+	if err := c.persistAppliedConfig(ctx, pending); err != nil {
 		return fmt.Errorf("persist pending import-policy reset fence: %w", err)
 	}
 	c.appliedConfig = pending
@@ -2163,7 +2180,7 @@ func (c *Controller) persistDirectPeerRetirements(ctx context.Context, addresses
 	}
 	pending.PendingDirectPeerRemovals = mapKeys(retiring)
 	pending = bgpdaemon.Normalize(pending)
-	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+	if err := c.persistAppliedConfig(ctx, pending); err != nil {
 		return fmt.Errorf("persist direct peer retirement fence: %w", err)
 	}
 	c.appliedConfig = pending
@@ -2202,7 +2219,7 @@ func (c *Controller) persistDirectPeerAddition(ctx context.Context, routerSpec r
 	additions[peer.Address] = true
 	pending.PendingDirectPeerAdditions = mapKeys(additions)
 	pending = bgpdaemon.Normalize(pending)
-	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+	if err := c.persistAppliedConfig(ctx, pending); err != nil {
 		return fmt.Errorf("persist direct peer addition fence: %w", err)
 	}
 	c.appliedConfig = pending
@@ -2423,7 +2440,7 @@ func (c *Controller) persistStaticPathRetirements(ctx context.Context, paths []b
 	pending.Advertisements = nil
 	pending.PendingStaticPathRemovals = staticAppliedPathValues(retiring)
 	pending = bgpdaemon.Normalize(pending)
-	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+	if err := c.persistAppliedConfig(ctx, pending); err != nil {
 		return fmt.Errorf("persist static path retirement fence: %w", err)
 	}
 	c.appliedConfig = pending

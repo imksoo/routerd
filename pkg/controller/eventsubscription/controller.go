@@ -49,7 +49,8 @@ const (
 // events, subscription runs, dynamic config parts, plugin runs). It is
 // satisfied by *state.SQLiteStore.
 type DataStore interface {
-	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
+	PruneExpiredSubscriptionParts(now time.Time) error
+	ListPendingSubscriptionEvents(group, subscription string, now int64, maxAttempts int) ([]routerstate.EventRecord, error)
 	SubscriptionRunStatus(subscription, eventID string) (status string, attempts int, found bool, err error)
 	UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin string) error
 	MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource string, dynamicGeneration int64, errMsg string) error
@@ -106,6 +107,11 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
+	if !c.DryRun {
+		if err := c.Store.PruneExpiredSubscriptionParts(time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EventSubscription" {
 			continue
@@ -136,7 +142,7 @@ func (c *Controller) reconcileSubscription(ctx context.Context, resource api.Res
 	}
 
 	now := time.Now().UTC()
-	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
+	events, err := c.Store.ListPendingSubscriptionEvents(spec.GroupRef, subKey, now.Unix(), defaultMaxAttempts)
 	if err != nil {
 		return fmt.Errorf("list federation events for %q: %w", subName, err)
 	}
@@ -146,13 +152,7 @@ func (c *Controller) reconcileSubscription(ctx context.Context, resource api.Res
 		if !matchEvent(spec.Match, ev) {
 			continue
 		}
-		eligible, err := c.eligible(subKey, ev.ID)
-		if err != nil {
-			return err
-		}
-		if eligible {
-			batch = append(batch, ev)
-		}
+		batch = append(batch, ev)
 	}
 	if len(batch) == 0 {
 		c.saveStatus(subName, "Idle", "", 0)

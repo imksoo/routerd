@@ -132,11 +132,55 @@ func isCompactableMobilityObserved(rec EventRecord) bool {
 	}
 }
 
+// FederationEventExists checks an event ID within its group without loading payloads.
+func (s *SQLiteStore) FederationEventExists(group, id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false, errStoreClosed
+	}
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM federation_events WHERE group_name = ? AND id = ?)`, group, id).Scan(&exists)
+	return exists, err
+}
+
+// CountFederationEvents counts retained events, including expired events.
+func (s *SQLiteStore) CountFederationEvents(group string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, errStoreClosed
+	}
+	query := `SELECT COUNT(*) FROM federation_events`
+	var args []any
+	if group != "" {
+		query += ` WHERE group_name = ?`
+		args = append(args, group)
+	}
+	var count int
+	err := s.db.QueryRow(query, args...).Scan(&count)
+	return count, err
+}
+
 // ListFederationEvents returns federation events ordered by observed_at. When
 // group is non-empty it filters to that group. Unless includeExpired is set,
 // events whose expires_at is set and in the past relative to now (unix seconds)
 // are excluded.
 func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]EventRecord, error) {
+	return s.listFederationEvents(group, nil, "", includeExpired, now)
+}
+
+// ListLocalFederationEvents reads live events originating on the given node.
+func (s *SQLiteStore) ListLocalFederationEvents(group, node string, now int64) ([]EventRecord, error) {
+	return s.listFederationEvents(group, &node, "", false, now)
+}
+
+// ListFederationEventsByType reads live events of one type in a group.
+func (s *SQLiteStore) ListFederationEventsByType(group, eventType string, now int64) ([]EventRecord, error) {
+	return s.listFederationEvents(group, nil, eventType, false, now)
+}
+
+func (s *SQLiteStore) listFederationEvents(group string, node *string, eventType string, includeExpired bool, now int64) ([]EventRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -153,6 +197,14 @@ func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, no
 	if group != "" {
 		clauses = append(clauses, "group_name = ?")
 		args = append(args, group)
+	}
+	if node != nil {
+		clauses = append(clauses, "source_node = ?")
+		args = append(args, *node)
+	}
+	if eventType != "" {
+		clauses = append(clauses, "type = ?")
+		args = append(args, eventType)
 	}
 	if !includeExpired {
 		// Keep rows with no expiry (0/NULL) or that have not yet expired.
@@ -178,6 +230,38 @@ func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, no
 		return nil, fmt.Errorf("list federation events: %w", err)
 	}
 	defer rows.Close()
+	return scanFederationEvents(rows)
+}
+
+// ListPendingSubscriptionEvents excludes already completed and exhausted runs
+// before decoding event payloads. Processing rechecks the run before execution.
+func (s *SQLiteStore) ListPendingSubscriptionEvents(group, subscription string, now int64, maxAttempts int) ([]EventRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errStoreClosed
+	}
+	query := `SELECT e.id,e.group_name,e.source_node,e.type,e.subject,e.dedupe_key,e.payload,e.observed_at,e.expires_at,e.recorded_at
+		FROM federation_events e
+		WHERE (e.expires_at IS NULL OR e.expires_at = 0 OR e.expires_at >= ?)
+		AND NOT EXISTS (SELECT 1 FROM event_subscription_runs r
+		  WHERE r.subscription = ? AND r.event_id = e.id
+		    AND (r.status = 'succeeded' OR (r.status = 'failed' AND r.attempts >= ?)))`
+	args := []any{now, subscription, maxAttempts}
+	if group != "" {
+		query += ` AND e.group_name = ?`
+		args = append(args, group)
+	}
+	query += ` ORDER BY e.observed_at, e.recorded_at, e.id`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list pending subscription events: %w", err)
+	}
+	defer rows.Close()
+	return scanFederationEvents(rows)
+}
+
+func scanFederationEvents(rows *sql.Rows) ([]EventRecord, error) {
 	var records []EventRecord
 	for rows.Next() {
 		var (
@@ -208,7 +292,8 @@ func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, no
 	return records, nil
 }
 
-// PruneFederationEvents enforces EventGroup retention (ADR 0006). It removes
+// PruneFederationEvents enforces EventGroup retention (ADR 0006). With no
+// retention limits, it removes expired events without dependent history. It removes
 // rows older than maxAge (when maxAge > 0) and, when maxEvents > 0, trims the
 // group down to the newest maxEvents rows (by observed_at desc, id desc). It
 // returns the total number of rows deleted.
@@ -225,6 +310,26 @@ func (s *SQLiteStore) PruneFederationEvents(group string, maxAge time.Duration, 
 		return 0, errStoreClosed
 	}
 	var total int64
+	// Without explicit retention, remove expired events only when no delivery
+	// or subscription history depends on their identity.
+	if maxAge <= 0 && maxEvents <= 0 {
+		query := `DELETE FROM federation_events
+			WHERE expires_at IS NOT NULL AND expires_at > 0 AND expires_at < ?
+			  AND NOT EXISTS (SELECT 1 FROM event_deliveries d WHERE d.event_id = federation_events.id)
+			  AND NOT EXISTS (SELECT 1 FROM event_subscription_runs r WHERE r.event_id = federation_events.id)`
+		args := []any{now.UTC().Unix()}
+		if group != "" {
+			query += ` AND group_name = ?`
+			args = append(args, group)
+		}
+		res, err := s.db.Exec(query, args...)
+		if err != nil {
+			return total, fmt.Errorf("prune expired federation events: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			total += n
+		}
+	}
 	if maxAge > 0 {
 		cutoff := now.UTC().Add(-maxAge).Unix()
 		var (
@@ -261,5 +366,16 @@ func (s *SQLiteStore) PruneFederationEvents(group string, maxAge time.Duration, 
 			total += n
 		}
 	}
+	// A delivered row with an expired delivery TTL and no retained event cannot
+	// suppress a delivery of that expired event. If the same ID is renewed, its
+	// later expiry must be delivered again. Keep pending and failed attempts.
+	if _, err := s.db.Exec(`DELETE FROM event_deliveries
+		WHERE status = ? AND event_expires_at IS NOT NULL AND event_expires_at > 0
+		  AND event_expires_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM federation_events WHERE id = event_deliveries.event_id)`,
+		DeliveryDelivered, now.UTC().Unix()); err != nil {
+		return total, fmt.Errorf("prune expired orphan federation deliveries: %w", err)
+	}
+
 	return total, nil
 }

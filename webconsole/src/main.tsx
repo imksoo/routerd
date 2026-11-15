@@ -2597,10 +2597,12 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [streamState, setStreamState] = useState<"connecting" | "live" | "polling">("connecting");
   const [lastStreamEvent, setLastStreamEvent] = useState<StreamEvent | null>(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const refreshInFlight = useRef(false);
   const queuedRefresh = useRef(false);
   const refreshTimer = useRef<number | null>(null);
-  const configRef = useRef<ConfigSnapshot | null>(null);
+  const refreshRef = useRef<() => void>(() => {});
   const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
@@ -2643,12 +2645,14 @@ function App() {
       tuning: includeTuning ? "1" : "0",
       vpn: includeVPN ? "1" : "0",
       resources: includeResources ? "1" : "0",
+      interfaces: selected === "overview" ? "1" : "0",
+      dpiStatus: selected === "overview" ? "1" : "0",
       dhcpLeases: includeDHCPLeases ? "1" : "0",
     });
     try {
       const [summaryResponse, configResponse, generationResponse, denyTimelineResponse, routesResponse, samResponse] = await Promise.all([
         fetchJSON<Summary>(`api/v1/summary?${summaryQuery.toString()}`),
-        shouldFetchConfig ? (configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config")) : Promise.resolve(null),
+        shouldFetchConfig ? fetchJSON<ConfigSnapshot>("api/v1/config") : Promise.resolve(null),
         shouldFetchGenerations ? fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`) : Promise.resolve(null),
         selected === "firewall" ? fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min") : Promise.resolve(null),
         shouldFetchRoutes ? fetchJSON<RoutesStatus>("api/v1/routes") : Promise.resolve(null),
@@ -2667,8 +2671,7 @@ function App() {
       if (summaryResponse.resources !== undefined) {
         setMetricSamples(current => appendMetricSample(current, summaryResponse));
       }
-      if (configResponse && !configRef.current) {
-        configRef.current = configResponse as ConfigSnapshot;
+      if (configResponse) {
         setConfig(configResponse as ConfigSnapshot);
       }
       if (Array.isArray(generationResponse)) {
@@ -2689,6 +2692,8 @@ function App() {
       }
     }
   }
+
+  refreshRef.current = refresh;
 
   async function loadOverviewDetails() {
     const query = new URLSearchParams({
@@ -2723,7 +2728,7 @@ function App() {
     }
     refreshTimer.current = window.setTimeout(() => {
       refreshTimer.current = null;
-      refresh();
+      refreshRef.current();
     }, delay);
   }
 
@@ -2741,7 +2746,7 @@ function App() {
 
   useEffect(() => {
     refresh();
-    const pollID = window.setInterval(refresh, 30000);
+    const pollID = window.setInterval(() => refreshRef.current(), 30000);
     let source: EventSource | null = null;
     if ("EventSource" in window) {
       source = new EventSource(basePath + "api/v1/events/stream");
@@ -2751,12 +2756,15 @@ function App() {
       source.addEventListener("routerd-event", event => {
         try {
           const parsed = JSON.parse((event as MessageEvent).data) as StreamEvent;
-          setLastStreamEvent(parsed);
+          setStreamState("live");
+          if (streamAffectsView(selectedRef.current, parsed)) {
+            setLastStreamEvent(parsed);
+            scheduleRefresh(250);
+          }
         } catch {
           setLastStreamEvent(null);
+          scheduleRefresh(250);
         }
-        setStreamState("live");
-        scheduleRefresh(250);
       });
       source.onerror = () => {
         setStreamState("polling");
@@ -2994,8 +3002,8 @@ function App() {
     const latest = generations.find(row => row.hasYaml);
     if (!latest || !config?.text) return;
     try {
-      const previous = await fetchText(`api/v1/generations/${latest.generation}/config`);
-      setConfigPlanDiff(unifiedLineDiff(`generation-${latest.generation}.yaml`, "current-file.yaml", previous, config.text));
+      const diff = await fetchText(`api/v1/generations/${latest.generation}/diff/current`);
+      setConfigPlanDiff(diff);
       setError("");
     } catch (err) {
       setError(String(err));
@@ -8479,33 +8487,16 @@ function formatDetailValue(value: unknown) {
   }
 }
 
-function unifiedLineDiff(fromName: string, toName: string, fromText: string, toText: string) {
-  if (fromText === toText) return `--- ${fromName}\n+++ ${toName}\n# no changes\n`;
-  const from = fromText.replace(/\n$/, "").split(/\n/);
-  const to = toText.replace(/\n$/, "").split(/\n/);
-  const table = Array.from({ length: from.length + 1 }, () => Array<number>(to.length + 1).fill(0));
-  for (let i = from.length - 1; i >= 0; i--) {
-    for (let j = to.length - 1; j >= 0; j--) {
-      table[i][j] = from[i] === to[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-    }
+function streamAffectsView(view: ViewKey, event: StreamEvent) {
+  if (view === "events") return true;
+  const type = event.type ?? "";
+  if (view === "config" || view === "generations") {
+    return !type || type.startsWith("routerd.config.") || type.startsWith("routerd.generation.");
   }
-  const lines = [`--- ${fromName}`, `+++ ${toName}`];
-  let i = 0;
-  let j = 0;
-  while (i < from.length || j < to.length) {
-    if (i < from.length && j < to.length && from[i] === to[j]) {
-      lines.push(` ${from[i]}`);
-      i++;
-      j++;
-    } else if (j < to.length && (i === from.length || table[i][j + 1] >= table[i + 1][j])) {
-      lines.push(`+${to[j]}`);
-      j++;
-    } else if (i < from.length) {
-      lines.push(`-${from[i]}`);
-      i++;
-    }
+  if (type === "routerd.client.ipv4.observed" || type.startsWith("routerd.mobility.arp.")) {
+    return view === "overview" || view === "clients" || view === "connections" || view === "firewall";
   }
-  return `${lines.join("\n")}\n`;
+  return true;
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {

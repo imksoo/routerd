@@ -332,8 +332,8 @@ func TestLedgerPruneEventsCommandRecordsAuditEvent(t *testing.T) {
 	if got := fmt.Sprint(event.Attributes["deletedRows"]); got != "1" {
 		t.Fatalf("deletedRows attribute = %q, want 1", got)
 	}
-	cutoff, ok := event.Attributes["cutoff"].(string)
-	if !ok || cutoff == "" {
+	cutoff := event.Attributes["cutoff"]
+	if cutoff == "" {
 		t.Fatalf("cutoff attribute = %#v", event.Attributes["cutoff"])
 	}
 	if _, err := time.Parse(time.RFC3339Nano, cutoff); err != nil {

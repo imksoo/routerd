@@ -34,10 +34,6 @@ type KeepalivedOptions struct {
 	PriorityByResource map[string]int
 }
 
-func KeepalivedConfig(router *api.Router, aliases map[string]string) ([]byte, error) {
-	return KeepalivedConfigWithOptions(router, aliases, KeepalivedOptions{})
-}
-
 func KeepalivedConfigWithOptions(router *api.Router, aliases map[string]string, opts KeepalivedOptions) ([]byte, error) {
 	instances, err := vrrpInstances(router, aliases, opts)
 	if err != nil {

@@ -39,6 +39,7 @@ const (
 type DiscoveryStore interface {
 	RecordFederationEvent(routerstate.EventRecord) error
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
+	ListFederationEventsByType(group, eventType string, now int64) ([]routerstate.EventRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)

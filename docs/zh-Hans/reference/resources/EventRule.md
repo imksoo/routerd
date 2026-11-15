@@ -6,6 +6,11 @@
 
 从持久化的本机事件记录匹配模式并生成事件，可按关联键分别维护状态。
 
+
+为防止反馈循环，EventRule 不将 EventRule 资源的状态变更事件作为输入；其他资源的状态变更事件仍可使用。
+
+向运行中的 routerd 添加第一个 EventRule 时，仅处理配置应用后记录的事件，不重放更早的事件。保留 EventRule 配置重启时，会继续处理尚未处理的事件。
+
 ## 指定条件与引用关系
 
 - pattern.operator 与 emit.topic 必填。topic、topics、trigger、expected 至少提供一项，但宽松的验证不保证模式可运行：只有 expected 不构成输入列表，absence 需要 trigger/topic。不会检查主题对应的资源是否存在。

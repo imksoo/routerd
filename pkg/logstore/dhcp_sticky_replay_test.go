@@ -9,7 +9,7 @@ import (
 )
 
 func TestDHCPStickyReplayDoesNotExtendRetentionOrOverwriteNewerState(t *testing.T) {
-	l, err := OpenDHCPStickyLog(filepath.Join(t.TempDir(), "sticky.db"))
+	l, err := OpenDHCPStickyLogContext(context.Background(), filepath.Join(t.TempDir(), "sticky.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

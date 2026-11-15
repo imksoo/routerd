@@ -341,14 +341,6 @@ func applyFreeBSD(ctx context.Context, cfg InterfaceConfig, conf []byte) ([]byte
 	return conf, nil
 }
 
-func ParseDump(data []byte) ([]PeerStatus, error) {
-	status, err := ParseInterfaceDump("", data)
-	if err != nil {
-		return nil, err
-	}
-	return status.Peers, nil
-}
-
 func ParseInterfaceDump(name string, data []byte) (InterfaceStatus, error) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if strings.TrimSpace(string(data)) == "" {

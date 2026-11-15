@@ -3,6 +3,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -247,6 +249,7 @@ CREATE TABLE IF NOT EXISTS event_subscription_runs (
   UNIQUE(subscription, event_id)
 );
 CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_runs(subscription, status);
+CREATE INDEX IF NOT EXISTS event_subscription_runs_event ON event_subscription_runs(event_id);
 CREATE TABLE IF NOT EXISTS action_executions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   idempotency_key TEXT NOT NULL UNIQUE,
@@ -736,20 +739,26 @@ func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, e
 	if err != nil {
 		return false, err
 	}
-	current := objectStatus{}
-	if strings.TrimSpace(raw) != "" {
-		if err := json.Unmarshal([]byte(raw), &current); err != nil {
-			return false, nil
-		}
-	}
-	currentData, _ := json.Marshal(current)
-	if string(currentData) != string(next) {
+	if !statusJSONEqual([]byte(raw), next) {
 		return false, nil
 	}
 	if s.generation == 0 {
 		return !generation.Valid, nil
 	}
 	return generation.Valid && generation.Int64 == s.generation, nil
+}
+
+// statusJSONEqual ignores JSON object field order without rounding numbers.
+func statusJSONEqual(a, b []byte) bool {
+	if !json.Valid(a) {
+		return false
+	}
+	var left, right any
+	first := json.NewDecoder(bytes.NewReader(a))
+	first.UseNumber()
+	second := json.NewDecoder(bytes.NewReader(b))
+	second.UseNumber()
+	return first.Decode(&left) == nil && second.Decode(&right) == nil && reflect.DeepEqual(left, right)
 }
 
 func nullGeneration(generation int64) any {
@@ -867,6 +876,38 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,mobility_dataplane_json=excluded.mobility_dataplane_json,arp_observer_intents_json=excluded.arp_observer_intents_json,fib_verdicts_json=excluded.fib_verdicts_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
 		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), nullableString(part.MobilityDataplaneJSON), nullableString(part.ARPObserverIntentsJSON), nullableString(part.FIBVerdictsJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
 	return err
+}
+
+// PruneExpiredSubscriptionParts removes expired, event-specific resource parts.
+// Parts containing action or typed dataplane payloads are retained for their
+// respective controllers. Active generations and non-expiring parts are kept.
+func (s *SQLiteStore) PruneExpiredSubscriptionParts(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("state store is closed")
+	}
+	where := ` WHERE source GLOB 'EventSubscription/*/*'
+		  AND expires_at <> '0001-01-01T00:00:00Z'
+		  AND julianday(expires_at) < julianday(?)
+		  AND coalesce(actionplans_json, '') IN ('', 'null', '[]')
+		  AND coalesce(mobility_dataplane_json, '') IN ('', 'null', '{}')
+		  AND coalesce(arp_observer_intents_json, '') IN ('', 'null', '[]')
+		  AND coalesce(fib_verdicts_json, '') IN ('', 'null', '[]')`
+	when := formatStateTime(now.UTC())
+	var found int
+	err := s.db.QueryRow(`SELECT 1 FROM dynamic_config_parts`+where+` LIMIT 1`, when).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("find expired event subscription parts: %w", err)
+	}
+	_, err = s.db.Exec(`DELETE FROM dynamic_config_parts`+where, when)
+	if err != nil {
+		return fmt.Errorf("prune expired event subscription parts: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error) {
@@ -1530,7 +1571,7 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 }
 
 func recordBusEvent(executor interface {
-	Exec(string, ...any) (sql.Result, error)
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, generation int64, now time.Time, event daemonapi.DaemonEvent, attrs string) (string, error) {
 	apiVersion := event.APIVersion
 	kind := event.Kind
@@ -1546,7 +1587,7 @@ func recordBusEvent(executor interface {
 		resourceKind = event.Resource.Kind
 		resourceName = event.Resource.Name
 	}
-	result, err := executor.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
+	result, err := executor.ExecContext(context.Background(), `INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, event.Type, event.Reason, event.Message, nullGeneration(generation), now.UTC().Format(time.RFC3339Nano),
 		event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
@@ -1695,6 +1736,20 @@ ON CONFLICT(consumer) DO NOTHING`, consumer, now); err != nil {
 	return cursor, err
 }
 
+// ResetEventConsumerCursor starts a newly enabled consumer at the current tip.
+func (s *SQLiteStore) ResetEventConsumerCursor(consumer string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return sql.ErrConnDone
+	}
+	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at)
+SELECT ?,COALESCE(MAX(id),0),? FROM events WHERE true
+ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,
+		consumer, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
 func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1702,7 +1757,7 @@ func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) err
 		return nil
 	}
 	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at) VALUES(?,?,?)
-ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,
+ON CONFLICT(consumer) DO UPDATE SET cursor=MAX(event_consumer_cursors.cursor,excluded.cursor),updated_at=excluded.updated_at`,
 		consumer, cursor, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }

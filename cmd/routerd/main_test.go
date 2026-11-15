@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -24,7 +23,6 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
-	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -691,81 +689,6 @@ func TestWriteFileIfChanged(t *testing.T) {
 	}
 }
 
-func TestParseFreeBSDRCConf(t *testing.T) {
-	got, err := parseFreeBSDRCConf([]byte(`# Generated
-gateway_enable="YES"
-ifconfig_vtnet2="DHCP"
-ifconfig_vtnet0_ipv6="inet6 accept_rtadv"
-`))
-	if err != nil {
-		t.Fatalf("parse rc.conf: %v", err)
-	}
-	for key, want := range map[string]string{
-		"gateway_enable":       "YES",
-		"ifconfig_vtnet2":      "DHCP",
-		"ifconfig_vtnet0_ipv6": "inet6 accept_rtadv",
-	} {
-		if got[key] != want {
-			t.Fatalf("%s = %q, want %q", key, got[key], want)
-		}
-	}
-	if ifname := freeBSDIfconfigKeyInterface("ifconfig_vtnet0_ipv6"); ifname != "vtnet0" {
-		t.Fatalf("ifconfig key interface = %q, want vtnet0", ifname)
-	}
-	ifnames := freeBSDDHCPClientIfnames([]byte("interface \"vtnet2\" {\n  ignore routers;\n};\n"))
-	if len(ifnames) != 1 || ifnames[0] != "vtnet2" {
-		t.Fatalf("dhclient ifnames = %v, want [vtnet2]", ifnames)
-	}
-}
-
-func TestParseFreeBSDSysrcValue(t *testing.T) {
-	tests := []struct {
-		name string
-		key  string
-		out  string
-		want string
-	}{
-		{name: "dash value", key: "dhcp6c_flags", out: "dhcp6c_flags: -n\n", want: "-n"},
-		{name: "quoted style not emitted", key: "ifconfig_vtnet0", out: "ifconfig_vtnet0: DHCP\n", want: "DHCP"},
-		{name: "fallback raw", key: "missing", out: "NO\n", want: "NO"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := parseFreeBSDSysrcValue(tt.key, []byte(tt.out)); got != tt.want {
-				t.Fatalf("parseFreeBSDSysrcValue() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestApplyFreeBSDRCDScriptsDisablesExecutableBackups(t *testing.T) {
-	dir := t.TempDir()
-	rcDir := filepath.Join(dir, "rc.d")
-	if err := os.MkdirAll(rcDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	backup := filepath.Join(rcDir, "routerd.recovery.20260510T235157Z")
-	if err := os.WriteFile(backup, []byte("#!/bin/sh\n# PROVIDE: routerd\n"), 0555); err != nil {
-		t.Fatal(err)
-	}
-	changed, err := applyFreeBSDRCDScripts(map[string][]byte{
-		"routerd": []byte("#!/bin/sh\n# PROVIDE: routerd\n"),
-	}, rcDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !stringSliceContainsPrefix(changed, "rc.d:disable-stale:") {
-		t.Fatalf("changed = %v, want stale rc.d backup disable marker", changed)
-	}
-	info, err := os.Stat(backup)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode()&0111 != 0 {
-		t.Fatalf("backup remained executable: %v", info.Mode())
-	}
-}
-
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -782,72 +705,6 @@ func stringSliceContainsPrefix(values []string, prefix string) bool {
 		}
 	}
 	return false
-}
-
-func TestCleanupLegacyFreeBSDStateDirMovesVarLibRouterd(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	oldLegacy := legacyFreeBSDStateDir
-	platformDefaults = platform.Defaults{
-		OS:       platform.OSFreeBSD,
-		StateDir: filepath.Join(dir, "var", "db", "routerd"),
-	}
-	legacyFreeBSDStateDir = filepath.Join(dir, "var", "lib", "routerd")
-	t.Cleanup(func() {
-		platformDefaults = oldDefaults
-		legacyFreeBSDStateDir = oldLegacy
-	})
-
-	staleLease := filepath.Join(legacyFreeBSDStateDir, "dhcpv6-client", "wan-pd", "lease.json")
-	if err := os.MkdirAll(filepath.Dir(staleLease), 0755); err != nil {
-		t.Fatalf("create legacy state: %v", err)
-	}
-	if err := os.WriteFile(staleLease, []byte(`{"currentPrefix":"2001:db8::/60"}`), 0644); err != nil {
-		t.Fatalf("write stale lease: %v", err)
-	}
-
-	moved, err := cleanupLegacyFreeBSDStateDir()
-	if err != nil {
-		t.Fatalf("cleanup legacy state: %v", err)
-	}
-	if len(moved) != 1 || !strings.Contains(moved[0], "legacy-var-lib-routerd-") {
-		t.Fatalf("moved = %v", moved)
-	}
-	if _, err := os.Stat(legacyFreeBSDStateDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("legacy state dir still exists or unexpected stat error: %v", err)
-	}
-	matches, err := filepath.Glob(filepath.Join(platformDefaults.StateDir, "legacy-var-lib-routerd-*", "dhcpv6-client", "wan-pd", "lease.json"))
-	if err != nil {
-		t.Fatalf("glob moved lease: %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("moved stale lease matches = %v", matches)
-	}
-}
-
-func TestFreeBSDProtectedIfnames(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{
-		Apply: api.ApplyPolicySpec{ProtectedInterfaces: []string{"mgmt"}},
-		Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "mgmt"},
-				Spec:     api.InterfaceSpec{IfName: "vtnet2", Managed: true},
-			},
-		},
-	}}
-	got := freeBSDProtectedIfnames(router)
-	if !got["vtnet2"] {
-		t.Fatalf("protected ifnames = %v, want vtnet2", got)
-	}
-	if got["vtnet0"] {
-		t.Fatalf("protected ifnames = %v, did not want vtnet0", got)
-	}
 }
 
 func TestParseDHCPCDDumpLeasePD(t *testing.T) {

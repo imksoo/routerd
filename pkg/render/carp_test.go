@@ -4,7 +4,6 @@ package render
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -43,10 +42,6 @@ func TestCARPConfigRendersFreeBSDIfconfigCommands(t *testing.T) {
 	if !reflect.DeepEqual(config.IfconfigCommands(), wantCommands) {
 		t.Fatalf("commands = %#v, want %#v", config.IfconfigCommands(), wantCommands)
 	}
-	lines := strings.Join(config.RCConfLines(), "\n")
-	if !strings.Contains(lines, `ifconfig_vtnet1_alias0="inet vhid 50 advbase 2 advskew 104 pass secret alias 10.240.70.10/32"`) {
-		t.Fatalf("rc.conf lines missing CARP alias:\n%s", lines)
-	}
 }
 
 func TestCARPConfigRendersIPv6IfconfigCommands(t *testing.T) {
@@ -71,10 +66,6 @@ func TestCARPConfigRendersIPv6IfconfigCommands(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(config.IfconfigCommands(), wantCommands) {
 		t.Fatalf("commands = %#v, want %#v", config.IfconfigCommands(), wantCommands)
-	}
-	lines := strings.Join(config.RCConfLines(), "\n")
-	if !strings.Contains(lines, `ifconfig_vtnet1_alias0="inet6 vhid 51 advbase 1 advskew 104 alias fd00:1234::10/128"`) {
-		t.Fatalf("rc.conf lines missing CARP IPv6 alias:\n%s", lines)
 	}
 }
 

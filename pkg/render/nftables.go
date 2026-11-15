@@ -299,10 +299,6 @@ func writeNftSetReset(buf *bytes.Buffer, family, table, name string) {
 	buf.WriteString("destroy set " + family + " " + table + " " + name + "\n")
 }
 
-func NftablesNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
-	return NftablesNAT44RulesForRouter(nil, rules)
-}
-
 func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([]byte, error) {
 	var ingressRules []ingressNATRule
 	var flowDNATPinholes []api.Resource

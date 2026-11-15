@@ -27,7 +27,7 @@ func TestKeepalivedConfigRendersVRRPInstance(t *testing.T) {
 			},
 		},
 	}}}
-	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens18"})
+	data, err := KeepalivedConfigWithOptions(router, map[string]string{"lan": "ens18"}, KeepalivedOptions{})
 	if err != nil {
 		t.Fatalf("render keepalived config: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestKeepalivedConfigRendersSingleOwnerFailoverVMAC(t *testing.T) {
 				ParentInterface: "wan", Interface: "wan-vmac", MACAddress: "02:00:5e:00:01:13",
 			}}},
 	}}}}
-	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens19", "wan": "eth0"})
+	data, err := KeepalivedConfigWithOptions(router, map[string]string{"lan": "ens19", "wan": "eth0"}, KeepalivedOptions{})
 	if err != nil {
 		t.Fatalf("render keepalived config: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestKeepalivedConfigRendersWANAndLANFailoverVMACsInOneVRRPTransition(t *tes
 			},
 		},
 	}}}}
-	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens19", "wan": "eth0"})
+	data, err := KeepalivedConfigWithOptions(router, map[string]string{"lan": "ens19", "wan": "eth0"}, KeepalivedOptions{})
 	if err != nil {
 		t.Fatalf("render keepalived config: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestKeepalivedConfigDefersGracefulVRRPAddressUntilRouterdReadiness(t *testi
 			},
 		},
 	}}}}
-	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens19", "wan": "ens18"})
+	data, err := KeepalivedConfigWithOptions(router, map[string]string{"lan": "ens19", "wan": "ens18"}, KeepalivedOptions{})
 	if err != nil {
 		t.Fatalf("render keepalived config: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
 			},
 		},
 	}}}
-	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens18"})
+	data, err := KeepalivedConfigWithOptions(router, map[string]string{"lan": "ens18"}, KeepalivedOptions{})
 	if err != nil {
 		t.Fatalf("render keepalived config: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestKeepalivedConfigRendersPreemptDelay(t *testing.T) {
 			},
 		},
 	}}}
-	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens18"})
+	data, err := KeepalivedConfigWithOptions(router, map[string]string{"lan": "ens18"}, KeepalivedOptions{})
 	if err != nil {
 		t.Fatalf("render keepalived config: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestKeepalivedConfigResolvesAuthenticationFromEnv(t *testing.T) {
 			},
 		},
 	}}}
-	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens18"})
+	data, err := KeepalivedConfigWithOptions(router, map[string]string{"lan": "ens18"}, KeepalivedOptions{})
 	if err != nil {
 		t.Fatalf("render keepalived config: %v", err)
 	}

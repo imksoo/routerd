@@ -277,11 +277,10 @@ func (c Controller) writeConfig(configPath string, config eventd.Config) (bool, 
 
 func (c Controller) saveStatus(group string, config eventd.Config, phase, message string, peersFrom []peersFromStatus, pendingSources []string) error {
 	status := map[string]any{
-		"phase":     phase,
-		"group":     group,
-		"nodeName":  config.NodeName,
-		"peers":     len(config.Peers),
-		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"phase":    phase,
+		"group":    group,
+		"nodeName": config.NodeName,
+		"peers":    len(config.Peers),
 	}
 	if strings.TrimSpace(config.Listen.Address) != "" {
 		status["listenAddress"] = config.Listen.Address

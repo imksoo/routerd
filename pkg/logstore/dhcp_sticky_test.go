@@ -10,7 +10,7 @@ import (
 )
 
 func TestDHCPStickyLogRecordsHeldLease(t *testing.T) {
-	log, err := OpenDHCPStickyLog(filepath.Join(t.TempDir(), "dhcp-sticky.db"))
+	log, err := OpenDHCPStickyLogContext(context.Background(), filepath.Join(t.TempDir(), "dhcp-sticky.db"))
 	if err != nil {
 		t.Fatalf("open sticky log: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestDHCPStickyLogRecordsHeldLease(t *testing.T) {
 }
 
 func TestDHCPStickyLogReacquireClearsHold(t *testing.T) {
-	log, err := OpenDHCPStickyLog(filepath.Join(t.TempDir(), "dhcp-sticky.db"))
+	log, err := OpenDHCPStickyLogContext(context.Background(), filepath.Join(t.TempDir(), "dhcp-sticky.db"))
 	if err != nil {
 		t.Fatalf("open sticky log: %v", err)
 	}

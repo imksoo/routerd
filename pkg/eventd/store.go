@@ -22,5 +22,4 @@ type EventStore interface {
 type DeliveryStore interface {
 	RecordDelivery(eventID, peer string) error
 	UpdateDeliveryStatus(eventID, peer, status string, attempts int, lastErr string, deliveredAt time.Time, eventExpiresAt time.Time) error
-	ListDeliveries(eventID, peer string) ([]routerstate.DeliveryRecord, error)
 }

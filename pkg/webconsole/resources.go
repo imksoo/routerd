@@ -4,7 +4,6 @@ package webconsole
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/controlapi"
@@ -132,12 +131,4 @@ func phaseCounts(resources []routerstate.ObjectStatus) map[string]int {
 		out[phase]++
 	}
 	return out
-}
-
-func SortResources(resources []routerstate.ObjectStatus) {
-	sort.Slice(resources, func(i, j int) bool {
-		a := resources[i].Kind + "/" + resources[i].Name
-		b := resources[j].Kind + "/" + resources[j].Name
-		return a < b
-	})
 }

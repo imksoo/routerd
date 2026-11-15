@@ -81,7 +81,7 @@ func TestOriginalObservationTimePersistsInActualJournalAndZeroHoldDoesNotReserve
 	if events[0].Attributes["observedAt"] != at.Format(time.RFC3339Nano) {
 		t.Fatalf("lost original timestamp: %+v", events[0])
 	}
-	sticky, err := logstore.OpenDHCPStickyLog(stickyPath)
+	sticky, err := logstore.OpenDHCPStickyLogContext(context.Background(), stickyPath)
 	if err != nil {
 		t.Fatal(err)
 	}

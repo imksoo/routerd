@@ -72,6 +72,8 @@ type SnapshotOptions struct {
 	IncludeConntrackTuning bool
 	IncludeVPN             bool
 	SkipResources          bool
+	SkipInterfaces         bool
+	SkipDPIStatus          bool
 	SkipDHCPLeases         bool
 }
 

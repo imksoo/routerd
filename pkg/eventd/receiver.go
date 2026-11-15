@@ -26,7 +26,7 @@ const maxBodyBytes = 1 << 20
 // Receiver is the HTTP handler that accepts signed federation events from peers
 // and persists them idempotently.
 type Receiver struct {
-	store        EventStore
+	store        *routerstate.SQLiteStore
 	secret       []byte
 	group        string
 	node         string
@@ -39,7 +39,7 @@ type Receiver struct {
 }
 
 // NewReceiver builds a Receiver.
-func NewReceiver(store EventStore, secret []byte, group, node string, replayWindow time.Duration) *Receiver {
+func NewReceiver(store *routerstate.SQLiteStore, secret []byte, group, node string, replayWindow time.Duration) *Receiver {
 	return &Receiver{
 		store:        store,
 		secret:       secret,
@@ -115,13 +115,12 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 
 	// Idempotency: a duplicate ID is a no-op insert, so detect duplicates for
 	// the metric/log without breaking the at-least-once 200 contract.
-	existing, _ := r.store.ListFederationEvents(ev.Group, true, time.Now().Unix())
-	dup := false
-	for _, e := range existing {
-		if e.ID == ev.ID {
-			dup = true
-			break
-		}
+	dup, err := r.store.FederationEventExists(ev.Group, ev.ID)
+	if err != nil {
+		r.rejected.Add(1)
+		r.metrics.RecordReceiverReject(ctx, r.group, "store_error")
+		http.Error(w, "store error", http.StatusInternalServerError)
+		return
 	}
 
 	rec := routerstate.EventRecord{
@@ -178,14 +177,14 @@ func (r *Receiver) handleStatus(w http.ResponseWriter, _ *http.Request) {
 
 // Status returns a snapshot of receiver counters and the stored event count.
 func (r *Receiver) Status() Status {
-	stored, _ := r.store.ListFederationEvents(r.group, true, time.Now().Unix())
+	stored, _ := r.store.CountFederationEvents(r.group)
 	return Status{
 		Node:            r.node,
 		Group:           r.group,
 		Received:        r.received.Load(),
 		Duplicate:       r.duplicate.Load(),
 		Rejected:        r.rejected.Load(),
-		StoredEvents:    len(stored),
+		StoredEvents:    stored,
 		ReplayWindowSec: int(r.replayWindow / time.Second),
 	}
 }

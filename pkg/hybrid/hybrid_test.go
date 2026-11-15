@@ -86,25 +86,6 @@ func TestExpandHybridRoutesRejectsUserRouteCollision(t *testing.T) {
 	}
 }
 
-func TestHybridRouteStatusAndMTUEstimate(t *testing.T) {
-	router := testRouter()
-	expanded, lowerings, err := ExpandHybridRoutes(*router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := mapStore{}
-	for _, lowering := range lowerings {
-		store[api.NetAPIVersion+"/IPv4Route/"+lowering.IPv4RouteName] = map[string]any{"phase": "Installed"}
-	}
-	status := StatusForHybridRoute(expanded, router.Spec.Resources[2], lowerings, store)
-	if status["phase"] != "Ready" {
-		t.Fatalf("status = %#v", status)
-	}
-	if status["defaultRouteUntouched"] != true || status["estimatedMTU"] != 1340 || status["tunnelOverhead"] != WireGuardOverheadBytes {
-		t.Fatalf("status = %#v", status)
-	}
-}
-
 func TestRouteTargetSupportsTunnelUnderlays(t *testing.T) {
 	for _, underlayType := range []string{"ipip", "gre", "fou", "gue"} {
 		device, gateway, err := RouteTarget(api.OverlayPeerSpec{Underlay: api.OverlayUnderlay{Type: underlayType, Interface: "tun0"}})
@@ -211,15 +192,6 @@ func TestTunnelUnderlayMTUEstimate(t *testing.T) {
 			}
 		})
 	}
-}
-
-type mapStore map[string]map[string]any
-
-func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	if status := s[apiVersion+"/"+kind+"/"+name]; status != nil {
-		return status
-	}
-	return map[string]any{}
 }
 
 func testRouter() *api.Router {

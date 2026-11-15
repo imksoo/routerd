@@ -627,6 +627,15 @@ func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, mes
 	if len(waiting) > 0 {
 		status["waiting"] = waiting
 	}
+	previous := c.Store.ObjectStatus(api.NetAPIVersion, "DNSResolver", name)
+	if phase == "Applied" {
+		for _, key := range []string{"observed", "conditions"} {
+			if value, ok := previous[key]; ok {
+				status[key] = value
+			}
+		}
+	}
+	statusvalue.KeepUpdateTime(previous, status)
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSResolver", name, status)
 }
 
@@ -640,7 +649,6 @@ func (c Controller) saveZoneStatus(name string, spec api.DNSZoneSpec, pendingRec
 		"zone":           spec.Zone,
 		"records":        len(spec.Records),
 		"pendingRecords": pendingRecords,
-		"updatedAt":      time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSZone", name, status)
 }

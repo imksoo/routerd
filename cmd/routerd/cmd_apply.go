@@ -30,11 +30,14 @@ import (
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/ha"
+	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/inventory"
 	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
@@ -313,27 +316,60 @@ func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCle
 	if err != nil {
 		return nil, err
 	}
+	// Startup condition state may temporarily hide resources that are still declared.
+	routers = append(routers, router)
 	for _, candidate := range routers {
+		if targetOS == platform.OSLinux {
+			out[api.SystemAPIVersion+"/ServiceUnit/"+render.RouterdUnitName] = true
+			out[api.SystemAPIVersion+"/ServiceUnit/"+render.BGPUnitName] = true
+			if render.RouterWantsDPIClassifier(candidate) {
+				out[api.SystemAPIVersion+"/ServiceUnit/"+render.DPIClassifierUnitName] = true
+			}
+			if render.RouterWantsNDPIAgent(candidate) {
+				out[api.SystemAPIVersion+"/ServiceUnit/"+render.NDPIAgentUnitName] = true
+			}
+			for _, resource := range candidate.Spec.Resources {
+				if resource.Kind == "FirewallEventLog" {
+					spec, err := resource.FirewallEventLogSpec()
+					if err != nil {
+						return nil, err
+					}
+					if spec.Enabled {
+						out[api.SystemAPIVersion+"/ServiceUnit/routerd-firewall-logger.service"] = true
+					}
+				}
+			}
+		}
 		for key := range configuredResourceStatusKeys(candidate) {
 			out[key] = true
 		}
+		generated := hostdeps.PackageResources(candidate)
+		generated = append(generated, hostdeps.KernelModuleResourcesForOS(candidate, targetOS)...)
+		generated = append(generated, hostdeps.DerivedSysctlResourcesForOS(candidate, targetOS)...)
+		generated = append(generated, hostdeps.NetworkAdoptionResources(candidate)...)
+		for _, resource := range append(generated, candidate.Spec.Resources...) {
+			if resource.Kind == "SysctlProfile" {
+				spec, err := resource.SysctlProfileSpec()
+				if err != nil {
+					return nil, err
+				}
+				entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+				if err != nil {
+					return nil, err
+				}
+				for _, entry := range entries {
+					out[api.SystemAPIVersion+"/SysctlProfile/"+resource.Metadata.Name+"-"+sysctlprofile.SafeName(entry.Key)] = true
+				}
+			}
+			out[lifecycle.ResourceKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
+		}
 	}
-	for _, resource := range router.Spec.Resources {
-		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
-			continue
+	if targetOS == platform.OSLinux {
+		for _, resource := range router.Spec.Resources {
+			if unit, ok := controllerchain.SynthesizedUnitName(resource); ok {
+				out[api.SystemAPIVersion+"/ServiceUnit/"+unit] = true
+			}
 		}
-		if strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
-			continue
-		}
-		apiVersion := resource.APIVersion
-		if apiVersion == "" {
-			apiVersion = lifecycle.APIVersionForKind(resource.Kind)
-		}
-		if strings.TrimSpace(apiVersion) == "" {
-			continue
-		}
-		out[apiVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
 	}
 	return out, nil
 }
@@ -787,42 +823,4 @@ func applyClusterResource(router *api.Router) (api.Resource, api.RouterdClusterS
 		return resource, spec, true, err
 	}
 	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
-}
-
-func cleanupLegacyFreeBSDStateDir() ([]string, error) {
-	if platformDefaults.OS != platform.OSFreeBSD {
-		return nil, nil
-	}
-	legacy := filepath.Clean(legacyFreeBSDStateDir)
-	current := filepath.Clean(platformDefaults.StateDir)
-	if legacy == "" || current == "" || legacy == current {
-		return nil, nil
-	}
-	info, err := os.Stat(legacy)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("stat legacy FreeBSD state dir %s: %w", legacy, err)
-	}
-	if !info.IsDir() {
-		return nil, nil
-	}
-	if err := os.MkdirAll(current, 0755); err != nil {
-		return nil, fmt.Errorf("create FreeBSD state dir %s: %w", current, err)
-	}
-	destination := filepath.Join(current, "legacy-var-lib-routerd-"+time.Now().UTC().Format("20060102T150405Z"))
-	for suffix := 0; ; suffix++ {
-		candidate := destination
-		if suffix > 0 {
-			candidate = fmt.Sprintf("%s-%d", destination, suffix)
-		}
-		err := os.Rename(legacy, candidate)
-		if err == nil {
-			return []string{legacy + " -> " + candidate}, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("move legacy FreeBSD state dir %s to %s: %w", legacy, candidate, err)
-		}
-	}
 }

@@ -5,14 +5,12 @@ package chain
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -49,9 +47,8 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 			return nil
 		}
 		return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu", map[string]any{
-			"phase":     "Skipped",
-			"reason":    "path MTU policy is enforced by pf",
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"phase":  "Skipped",
+			"reason": "path MTU policy is enforced by pf",
 		})
 	}
 	mssData, err := render.NftablesTCPMSSClampWithLocalCaptureIntents(c.Router, c.LocalCaptureIntents)
@@ -101,7 +98,6 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 			"forceFragmentChanged":    forceFragmentChanged,
 			"forceFragmentIPv4Active": len(bytes.TrimSpace(forceFragmentData)) > 0,
 			"dryRun":                  c.DryRun,
-			"updatedAt":               time.Now().UTC().Format(time.RFC3339Nano),
 		}
 		if len(bytes.TrimSpace(mssData)) == 0 && len(bytes.TrimSpace(l2MSSData)) == 0 && len(bytes.TrimSpace(forceFragmentData)) == 0 {
 			status["phase"] = "Skipped"
@@ -125,8 +121,7 @@ func (c PathMTUController) savePathMTUError(reason string, cause error) error {
 	if c.Store != nil {
 		if err := c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu", map[string]any{
 			"phase": "Error", "reason": reason, "error": cause.Error(),
-			"drifted":   strings.Contains(strings.ToLower(cause.Error()), "drift"),
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			"drifted": strings.Contains(strings.ToLower(cause.Error()), "drift"),
 		}); err != nil {
 			return fmt.Errorf("%v (saving PathMTU error status: %w)", cause, err)
 		}
@@ -157,30 +152,15 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 		}
 		return writeFileIfChanged(path, data, 0644, false)
 	}
-	out, err := c.runNFT(ctx, nft, "-j", "list", "tables")
-	if err != nil {
-		return false, fmt.Errorf("list nft tables: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	var listing struct {
-		Objects []struct {
-			Table *struct {
-				Family string `json:"family"`
-				Name   string `json:"name"`
-			} `json:"table"`
-		} `json:"nftables"`
-	}
-	if err := json.Unmarshal(out, &listing); err != nil {
-		return false, fmt.Errorf("decode nft tables: %w", err)
+	out, err := c.runNFT(ctx, nft, "list", "table", "bridge", "routerd_l2_mss")
+	missing := nftListMissing(out, err)
+	if err != nil && !missing {
+		return false, fmt.Errorf("list nft table bridge routerd_l2_mss: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var batch bytes.Buffer
-	hadCurrent := false
-	for _, object := range listing.Objects {
-		table := object.Table
-		if table == nil || table.Family != "bridge" || table.Name != "routerd_l2_mss" {
-			continue
-		}
-		fmt.Fprintf(&batch, "delete table bridge %s\n", table.Name)
-		hadCurrent = true
+	hadCurrent := !missing
+	if hadCurrent {
+		batch.WriteString("delete table bridge routerd_l2_mss\n")
 	}
 	batch.Write(data)
 	if batch.Len() == 0 {
@@ -192,9 +172,6 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path string
 	changed, err := writeFileIfChanged(path, batch.Bytes(), 0644, false)
 	if err != nil {
 		return false, err
-	}
-	if out, err := c.runNFT(ctx, nft, "-c", "-f", path); err != nil {
-		return false, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
 		return false, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
@@ -240,13 +217,17 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if listErr != nil && !missing {
 		return changed, fmt.Errorf("list nft table %s %s: %w: %s", family, table, listErr, strings.TrimSpace(string(out)))
 	}
-	// The file and table can both exist while the kernel rules have changed.
-	// Reapply the rendered table atomically on every reconciliation.
-	if out, err := c.runNFT(ctx, nft, "-c", "-f", path); err != nil {
-		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
+	// Flush alone leaves unexpected chains and sets behind. Replace the whole
+	// table in one nft transaction so missing and extra objects are repaired.
+	var batch bytes.Buffer
+	if !missing {
+		fmt.Fprintf(&batch, "delete table %s %s\n", family, table)
 	}
-	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
-		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
+	batch.Write(data)
+	cmd := exec.CommandContext(ctx, nft, "-f", "-")
+	cmd.Stdin = &batch
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return changed, fmt.Errorf("apply nft table %s %s: %w: %s", family, table, err, strings.TrimSpace(string(out)))
 	}
 	return changed || missing, nil
 }

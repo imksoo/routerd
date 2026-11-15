@@ -6,6 +6,11 @@
 
 從持久化的本機事件紀錄比對模式並產生事件，可依關聯鍵分開維護狀態。
 
+
+為防止回饋循環，EventRule 不會將 EventRule 資源的狀態變更事件作為輸入；其他資源的狀態變更事件仍可使用。
+
+向執行中的 routerd 新增第一個 EventRule 時，僅處理設定套用後記錄的事件，不重播更早的事件。保留 EventRule 設定重新啟動時，會繼續處理尚未處理的事件。
+
 ## 指定條件與參照關係
 
 - pattern.operator 與 emit.topic 必填。topic、topics、trigger、expected 至少提供一項，但寬鬆的驗證不保證模式可運作：只有 expected 不構成輸入清單，absence 需要 trigger/topic。不會檢查主題對應的資源是否存在。

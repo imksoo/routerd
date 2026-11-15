@@ -1362,22 +1362,6 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 	return checks
 }
 
-func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
-	if r.router == nil {
-		return 0
-	}
-	for _, res := range r.router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "WireGuardInterface" || res.Metadata.Name != iface {
-			continue
-		}
-		spec, err := res.WireGuardInterfaceSpec()
-		if err == nil {
-			return spec.ListenPort
-		}
-	}
-	return 0
-}
-
 func doctorHybridDefaultRouteCheck(name string, destinations []string) doctorCheck {
 	for _, destination := range destinations {
 		if doctorHybridDefaultDestination(destination) {

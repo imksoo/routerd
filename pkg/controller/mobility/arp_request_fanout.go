@@ -232,7 +232,7 @@ func (c DiscoveryController) ReconcileARPProbeRequests(ctx context.Context) erro
 		if !onPremPoolCanFanoutARP(pool) {
 			continue
 		}
-		events, err := c.Store.ListFederationEvents(pool.Spec.GroupRef, false, now.Unix())
+		events, err := c.Store.ListFederationEventsByType(pool.Spec.GroupRef, OnPremARPRequestObservedEvent, now.Unix())
 		if err != nil {
 			errs = append(errs, fmt.Errorf("list onprem ARP request events for %s: %w", pool.Name, err))
 			continue

@@ -43,7 +43,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	var errors []string
 	var err error
 	var resources []routerstate.ObjectStatus
-	if !opts.SkipResources {
+	if !opts.SkipResources || !opts.SkipInterfaces {
 		resources, err = h.resourceStatuses()
 		if err != nil {
 			errors = append(errors, err.Error())
@@ -77,19 +77,23 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 			}
 		}
 	}
-	var dnsQueries []logstore.DNSQuery
-	if opts.DNSQueryLimit >= 0 {
-		dnsQueries, err = h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: opts.DNSQueryLimit})
+	var dnsQueries, fingerprintDNSQueries []logstore.DNSQuery
+	queryLimit := opts.DNSQueryLimit
+	if opts.IncludeClients && opts.FingerprintQueryLimit > queryLimit {
+		queryLimit = opts.FingerprintQueryLimit
+	}
+	if queryLimit >= 0 {
+		queries, err := h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: queryLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
-		}
-	}
-	fingerprintDNSQueries := dnsQueries
-	if opts.IncludeClients && opts.FingerprintQueryLimit > opts.DNSQueryLimit {
-		if queries, err := h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: opts.FingerprintQueryLimit}); err == nil {
-			fingerprintDNSQueries = queries
 		} else {
-			errors = append(errors, err.Error())
+			fingerprintDNSQueries = queries
+			if opts.DNSQueryLimit >= 0 {
+				dnsQueries = queries
+				if len(dnsQueries) > opts.DNSQueryLimit {
+					dnsQueries = dnsQueries[:opts.DNSQueryLimit]
+				}
+			}
 		}
 	}
 	var trafficFlows []logstore.TrafficFlow
@@ -181,7 +185,17 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
-	dpiStatus := h.dpiStatus(ctx)
+	var dpiStatus *DPIStatus
+	if !opts.SkipDPIStatus {
+		dpiStatus = h.dpiStatus(ctx)
+	}
+	var interfaces []InterfaceSummary
+	if !opts.SkipInterfaces {
+		interfaces = h.interfaceSummaries(resources)
+	}
+	if opts.SkipResources {
+		resources = nil
+	}
 	systemUsage := h.readSystemUsage()
 	result = resultWithLatestGeneration(result, h.opts.Store)
 	controllers := h.controllerStatuses()
@@ -194,7 +208,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 		GatewayHealth:    gatewayHealth(resources),
 		Phases:           phaseCounts(resources),
 		Resources:        resources,
-		Interfaces:       h.interfaceSummaries(resources),
+		Interfaces:       interfaces,
 		Events:           events,
 		Connections:      connections,
 		DNSQueries:       dnsQueries,
@@ -256,6 +270,8 @@ func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
 		IncludeConntrackTuning: boolQuery(r, "tuning", false),
 		IncludeVPN:             boolQuery(r, "vpn", true),
 		SkipResources:          !boolQuery(r, "resources", true),
+		SkipInterfaces:         !boolQuery(r, "interfaces", true),
+		SkipDPIStatus:          !boolQuery(r, "dpiStatus", true),
 		SkipDHCPLeases:         !boolQuery(r, "dhcpLeases", true),
 	}))
 }

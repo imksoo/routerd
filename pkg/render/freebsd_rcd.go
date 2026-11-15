@@ -991,10 +991,6 @@ func freeBSDServiceName(value string) string {
 	return value
 }
 
-func FreeBSDServiceName(value string) string {
-	return freeBSDServiceName(value)
-}
-
 func freeBSDRCDPgrepPattern(args []string) string {
 	var parts []string
 	for _, arg := range args {

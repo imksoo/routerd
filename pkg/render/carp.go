@@ -3,7 +3,6 @@
 package render
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,40 +83,11 @@ func (c CARPConfigData) IfconfigCommands() [][]string {
 	return commands
 }
 
-func (c CARPConfigData) RCConfLines() []string {
-	var lines []string
-	lines = append(lines, "routerd_carp_enable=\"YES\"")
-	if len(c.Interfaces) == 0 {
-		return lines
-	}
-	indexByInterface := map[string]int{}
-	for _, iface := range c.Interfaces {
-		index := indexByInterface[iface.Interface]
-		indexByInterface[iface.Interface]++
-		lines = append(lines, fmt.Sprintf("ifconfig_%s_alias%d=\"%s\"", iface.Interface, index, strings.Join(iface.rcConfArgs(), " ")))
-	}
-	return lines
-}
-
 func (c CARPConfigData) PreemptSysctlValue() string {
 	if c.Preempt {
 		return "1"
 	}
 	return "0"
-}
-
-func (i CARPInterface) rcConfArgs() []string {
-	args := []string{
-		carpAddressFamily(i.Family),
-		"vhid", strconv.Itoa(i.VirtualHostID),
-		"advbase", strconv.Itoa(i.AdvBase),
-		"advskew", strconv.Itoa(i.AdvSkew),
-	}
-	if i.Password != "" {
-		args = append(args, "pass", i.Password)
-	}
-	args = append(args, "alias", i.Address)
-	return args
 }
 
 func carpAddressFamily(family string) string {

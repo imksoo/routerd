@@ -1108,12 +1108,15 @@ func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, e
 	return resolved, nil
 }
 
-func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time.Time, targetOS platform.OS) (*api.Router, error) {
-	effective, err := r.effectiveRouterForReconcile(store)
-	if err != nil {
-		return nil, err
+func (r *Runner) effectiveDynamicRouteSAMView(store eventedStore, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
+	if err := r.saveWhenFalseStatuses(store); err != nil {
+		return dynamicRouteSAMView{}, err
 	}
-	view, err := buildDynamicRouteSAMView(effective, r.Store, now, targetOS)
+	return buildDynamicRouteSAMView(r.effectiveRouter(store), r.Store, now, targetOS)
+}
+
+func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time.Time, targetOS platform.OS) (*api.Router, error) {
+	view, err := r.effectiveDynamicRouteSAMView(store, now, targetOS)
 	if err != nil {
 		return nil, err
 	}
@@ -1566,7 +1569,7 @@ func scheduledReconcileSkipsController(name string) bool {
 		// periodic cadence and status subscriptions. Running them again from
 		// --apply-interval makes the scheduled pass probe or rewrite host state
 		// without adding a stronger convergence signal.
-		"link", "tunnel", "wireguard", "ipv4-static-address", "ipv4-policy-route", "ipv4-route", "hybrid-route",
+		"link", "bridge", "vxlan-tunnel", "tunnel", "wireguard", "ipv4-static-address", "ipv4-policy-route", "ipv4-route", "hybrid-route",
 		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "lan-address",
 		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
 		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
@@ -1729,7 +1732,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	daemonStatusSync := DaemonStatusController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
 	wan := egressroute.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store}
 	durableEvents := r.Store
-	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
+	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger, MutationGate: opts.MutationGate}
 	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents}
 	health := healthcheck.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
@@ -1939,11 +1942,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: ipv4StaticAddressStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			ipv4AddressMu.Lock()
 			defer ipv4AddressMu.Unlock()
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2002,11 +2001,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteControllerStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2017,11 +2012,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "hybrid-route", Subs: hybridRouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2033,11 +2024,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sam", Every: 30 * time.Second, Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2053,11 +2040,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
 		framework.FuncController{ControllerName: "path-mtu", Subs: pathMTUStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2210,12 +2193,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
+			if err := r.saveWhenFalseStatuses(store); err != nil {
 				return false, err
 			}
 			current := bfd
-			current.Router = effective
+			current.Router = r.effectiveRouter(store)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.currentRouter()), Subs: bgpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2243,11 +2225,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	if !opts.FirewallDisabled {
 		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Every: 30 * time.Second, Subs: firewallStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2902,7 +2880,21 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 		for ctx.Err() == nil {
 		waitForExisting:
 			for ctx.Err() == nil {
-				processes, err := listSupervisedDaemonProcesses()
+				var processes []supervisedDaemonProcess
+				if observedPID != 0 && runtime.GOOS == "linux" {
+					data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(observedPID), "cmdline"))
+					if err == nil && len(data) != 0 {
+						args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+						name, resource := supervisedProcessIdentity(args)
+						if name == binary && resource == resourceName {
+							processes = []supervisedDaemonProcess{{PID: observedPID, Args: args}}
+						}
+					}
+				}
+				var err error
+				if len(processes) == 0 {
+					processes, err = listSupervisedDaemonProcesses()
+				}
 				if err != nil {
 					if logger != nil {
 						logger.Error("list routerd client daemons", "error", err)
@@ -3555,7 +3547,11 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 			}
 			next := copyStatusMap(base)
 			if daemonStatusObservedOnlyKind(observed.Resource.Kind) {
-				next = daemonObservedOnlyStatus(c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name), base, observed)
+				previous := c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name)
+				next = daemonObservedOnlyStatus(previous, base, observed)
+				if observed.Resource.Kind == "DNSResolver" && observed.Resource.APIVersion == api.NetAPIVersion {
+					statusvalue.KeepUpdateTime(previous, next)
+				}
 			} else {
 				for key, value := range observed.Observed {
 					next[key] = value

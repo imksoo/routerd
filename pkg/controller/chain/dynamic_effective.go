@@ -56,7 +56,7 @@ func buildDynamicRouteSAMView(startup *api.Router, store dynamicConfigPartLister
 			return dynamicRouteSAMView{}, fmt.Errorf("list dynamic config parts: %w", err)
 		}
 		if hasDynamicConfigResources(records, now) {
-			parts, err := genericDynamicConfigPartsFromRecords(records)
+			parts, err := genericDynamicConfigPartsFromRecords(records, now)
 			if err != nil {
 				return dynamicRouteSAMView{}, err
 			}
@@ -307,10 +307,10 @@ func mobilityARPObserverIntentsFromRecords(records []routerstate.DynamicConfigPa
 // to enter the generic effective-router merge. MobilityPool effects are an
 // explicit typed channel; any historical generic payload from that source is
 // intentionally ignored rather than migrated or replayed.
-func genericDynamicConfigPartsFromRecords(records []routerstate.DynamicConfigPartRecord) ([]dynamicconfig.DynamicConfigPart, error) {
+func genericDynamicConfigPartsFromRecords(records []routerstate.DynamicConfigPartRecord, now time.Time) ([]dynamicconfig.DynamicConfigPart, error) {
 	generic := make([]routerstate.DynamicConfigPartRecord, 0, len(records))
 	for _, record := range records {
-		if dynamicconfig.IsMobilityPoolReservedSource(record.Source) {
+		if record.EffectiveStatus(now) == "expired" || dynamicconfig.IsMobilityPoolReservedSource(record.Source) {
 			continue
 		}
 		generic = append(generic, record)

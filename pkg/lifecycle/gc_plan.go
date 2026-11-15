@@ -30,7 +30,8 @@ func PlanResourceTeardownGC(desired map[string]bool, statuses []routerstate.Obje
 func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
 	var deletes []routerstate.ObjectStatus
 	for _, status := range statuses {
-		if api.IsRemovedLegacyKind(status.Kind) || (status.APIVersion == api.RouterAPIVersion && status.Kind == "Router" && status.Name == "sam-dataplane") {
+		derivedHostState := status.APIVersion == api.SystemAPIVersion && (status.Kind == "KernelModule" || status.Kind == "NetworkAdoption")
+		if (api.IsRemovedLegacyKind(status.Kind) && !(derivedHostState && desired[ObjectStatusID(status)])) || (status.APIVersion == api.RouterAPIVersion && status.Kind == "Router" && status.Name == "sam-dataplane") {
 			deletes = append(deletes, status)
 			continue
 		}

@@ -1263,16 +1263,6 @@ func EffectiveIPv6PDPrefixLength(profile string, configured int) int {
 	return 0
 }
 
-func EffectiveIPv6PDDUIDType(profile, configured string) string {
-	if configured != "" {
-		return configured
-	}
-	if IsNTTIPv6PDProfile(profile) {
-		return "link-layer"
-	}
-	return ""
-}
-
 type IPv6DelegatedAddressSpec struct {
 	// PrefixDelegation references the DHCPv6PrefixDelegation resource that supplies the delegated prefix.
 	PrefixDelegation string `yaml:"prefixDelegation" json:"prefixDelegation"`
