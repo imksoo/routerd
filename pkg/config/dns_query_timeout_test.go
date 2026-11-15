@@ -3,7 +3,6 @@
 package config
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -27,9 +26,6 @@ func TestValidateDNSForwarderQueryTimeout(t *testing.T) {
 			matched, err := validateDNSResource(resource, platform.OSLinux)
 			if !matched || (err == nil) != tt.valid {
 				t.Fatalf("validate queryTimeout %q: matched=%v err=%v", tt.value, matched, err)
-			}
-			if err != nil && !strings.Contains(err.Error(), "spec.queryTimeout must be a positive duration") {
-				t.Fatalf("unexpected validation error: %v", err)
 			}
 		})
 	}

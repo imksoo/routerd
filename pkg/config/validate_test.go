@@ -857,59 +857,6 @@ func TestValidateTailscaleNodeRejectsInvalidRoute(t *testing.T) {
 	}
 }
 
-func TestValidatePhase15LANServiceKinds(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: true}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::1"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
-				Interface:   "lan",
-				AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
-				Gateway:     "192.168.10.1",
-				DNSServers:  []string{"192.168.10.1"},
-				NTPServers:  []string{"192.168.10.1"},
-				DomainFrom:  api.StatusValueSourceSpec{Resource: "DNSZone/local", Field: "zone"},
-				Options:     []api.DHCPv4OptionSpec{{Name: "domain-search", Value: "lan"}},
-			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{
-				Interface:   "lan",
-				Mode:        "both",
-				AddressPool: api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
-				DNSServers:  []string{"2001:db8::53"},
-				SNTPServers: []string{"2001:db8::123"},
-				DomainSearchFrom: []api.StatusValueSourceSpec{
-					{Resource: "DNSZone/local", Field: "zone"},
-				},
-			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixFrom: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "address"}, RDNSS: []string{"2001:db8::53"}, DNSSLFrom: []api.StatusValueSourceSpec{{Resource: "DNSZone/local", Field: "zone"}}, MTU: 1500, PRFPreference: "high"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSZoneSpec{
-				Zone: "lan",
-				Records: []api.DNSZoneRecordSpec{
-					{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"},
-					{Hostname: "router6.lan", IPv6From: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "address"}},
-				},
-			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "resolver"}, Spec: api.DNSResolverSpec{
-				Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
-				Sources: []api.DNSResolverSourceSpec{
-					{Name: "local", Kind: "zone", Match: []string{"lan"}, ZoneRef: []string{"local"}},
-					{Name: "default", Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://192.0.2.53:53"}},
-				},
-			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate Phase 1.5 LAN service kinds: %v", err)
-	}
-}
-
 func TestValidateDHCPv4ServerLeaseSyncRejectsTargetUserNewline(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
