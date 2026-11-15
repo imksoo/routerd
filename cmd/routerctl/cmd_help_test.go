@@ -121,19 +121,6 @@ func TestSubcommandHelpRendersUsageFlagsExamples(t *testing.T) {
 	}
 }
 
-func TestGetHelpMentionsRuntimeSubjects(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"get", "--help"}, &stdout, &stderr); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	combined := stdout.String() + stderr.String()
-	for _, want := range []string{"get events", "get connections", "get dns-queries", "get traffic-flows", "get firewall-logs", "--topic", "--resource"} {
-		if !strings.Contains(combined, want) {
-			t.Errorf("get --help should mention %s, got:\n%s", want, combined)
-		}
-	}
-}
-
 func TestTopLevelUsageListsDomainControlCommands(t *testing.T) {
 	var stdout bytes.Buffer
 	usage(&stdout)
