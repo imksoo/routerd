@@ -77,10 +77,3 @@ func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) 
 		t.Fatalf("explicit fwmark = 0x%x, want 0x999", got)
 	}
 }
-
-func healthResource(name string) api.Resource {
-	return api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-		Metadata: api.ObjectMeta{Name: name},
-	}
-}

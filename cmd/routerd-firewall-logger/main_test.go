@@ -285,10 +285,6 @@ func TestShouldClassifyForwardDPIStopsAfterUnknownPacketBudget(t *testing.T) {
 	}
 }
 
-func logstoreEntry(hint string) logstore.FirewallLogEntry {
-	return logstore.FirewallLogEntry{Action: "drop", Protocol: "tcp", L3Proto: "ipv4", Hint: hint}
-}
-
 func TestFirewallLogEntryFromIPv6Packet(t *testing.T) {
 	packet := append([]byte{
 		0x60, 0, 0, 0, 0, 8, 17, 64,

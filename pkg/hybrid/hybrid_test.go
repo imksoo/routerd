@@ -213,25 +213,3 @@ func testRouter() *api.Router {
 		}},
 	}
 }
-
-func findHybridTestResource(t *testing.T, router api.Router, apiVersion, kind, name string) api.Resource {
-	t.Helper()
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == apiVersion && resource.Kind == kind && resource.Metadata.Name == name {
-			return resource
-		}
-	}
-	t.Fatalf("resource %s/%s/%s not found in %#v", apiVersion, kind, name, router.Spec.Resources)
-	return api.Resource{}
-}
-
-func findResourceByKind(t *testing.T, router api.Router, apiVersion, kind string) api.Resource {
-	t.Helper()
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == apiVersion && resource.Kind == kind {
-			return resource
-		}
-	}
-	t.Fatalf("resource %s/%s not found in %#v", apiVersion, kind, router.Spec.Resources)
-	return api.Resource{}
-}
