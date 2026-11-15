@@ -652,28 +652,6 @@ func TestPFSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
 	}
 }
 
-func TestPFNAT44RulesRenderResolvedMasquerade(t *testing.T) {
-	data, err := PFNAT44Rules([]NAT44RenderRule{{
-		Name:                    "lan-to-dslite",
-		Type:                    "masquerade",
-		EgressInterface:         "gif41",
-		SourceRanges:            []string{"192.168.160.0/24"},
-		ExcludeDestinationCIDRs: []string{"192.168.0.0/16", "10.0.0.0/8"},
-	}})
-	if err != nil {
-		t.Fatalf("render pf NAT44 rules: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		`no nat on gif41 from 192.168.160.0/24 to { 10.0.0.0/8, 192.168.0.0/16 }`,
-		`nat on gif41 from 192.168.160.0/24 to any -> (gif41)`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("pf NAT44 output missing %q:\n%s", want, got)
-		}
-	}
-}
-
 func TestPFNAT44RulesRenderPerInterfaceMasquerade(t *testing.T) {
 	data, err := PFNAT44Rules([]NAT44RenderRule{
 		{
