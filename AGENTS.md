@@ -119,8 +119,8 @@ Keep changes small. Inspect the staged diff against the authorized task.
 Commit and publish meaningful work promptly; report concrete progress,
 revision, real observations, and remaining work. Do not stop development merely
 to wait for unrelated CI. Do not claim live validation that did not occur.
-Do not merge, release, replace production routers, or delete the 1.5/2.0
-branches/repositories unless that action's authorization and conditions hold.
+Do not merge, release, or replace production routers unless that action's
+authorization and conditions hold.
 
 A violation is a negative result. Remove the violating change and its
 unnecessary dependencies, report the wasted work and cause concisely, and

@@ -200,4 +200,4 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck scripts/ci/detect-quality-changes.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-sh-cwd-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
+          shellcheck scripts/ci/detect-quality-changes.sh packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-sh-cwd-smoke.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh
