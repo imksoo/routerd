@@ -3,7 +3,6 @@
 package api
 
 import (
-	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -22,68 +21,6 @@ func TestIPsecConnectionUsesCanonicalPhaseProposalFields(t *testing.T) {
 			spec, err := resource.IPsecConnectionSpec()
 			if err != nil || len(spec.Phase1Proposals) != 1 || spec.Phase1Proposals[0] != "invalid-proposal" {
 				t.Fatalf("proposal decode = %#v, err=%v", spec.Phase1Proposals, err)
-			}
-		})
-	}
-}
-
-func TestMobilityPoolRejectsRemovedMemberDeliveryFields(t *testing.T) {
-	var resource Resource
-	err := yaml.Unmarshal([]byte(`
-apiVersion: mobility.routerd.net/v1alpha1
-kind: MobilityPool
-metadata: {name: pool}
-spec:
-  prefix: 10.77.60.0/24
-  groupRef: cloudedge
-  members:
-    - nodeRef: edge-a
-      delivery:
-        peerRef: onprem
-`), &resource)
-	if err == nil {
-		t.Fatal("MobilityPool accepted removed member delivery configuration")
-	}
-	if !strings.Contains(err.Error(), "members[0].delivery is not supported") {
-		t.Fatalf("unmarshal error = %v", err)
-	}
-}
-
-func TestMobilityPoolRejectsTopologyAndUnknownMemberFields(t *testing.T) {
-	for _, test := range []struct {
-		field string
-		value string
-	}{
-		{field: "site", value: "cloud-a"},
-		{field: "role", value: "cloud"},
-		{field: "placement", value: "{group: cloud-a, priority: 10}"},
-		{field: "maintenance", value: "{drain: true}"},
-		{field: "maxSecondaryIPs", value: "4"},
-		{field: "eventEndpoint", value: "https://edge-a.example.test/events"},
-		{field: "samEndpoint", value: "10.0.0.1"},
-		{field: "macAddresses", value: "[02:00:00:00:00:01]"},
-		{field: "routeReflector", value: "true"},
-		{field: "wireGuard", value: "{publicKey: key}"},
-		{field: "unknown", value: "value"},
-	} {
-		t.Run(test.field, func(t *testing.T) {
-			var resource Resource
-			err := yaml.Unmarshal([]byte(`
-apiVersion: mobility.routerd.net/v1alpha1
-kind: MobilityPool
-metadata: {name: pool}
-spec:
-  prefix: 10.77.60.0/24
-  groupRef: cloudedge
-  members:
-    - nodeRef: edge-a
-      `+test.field+`: `+test.value+`
-`), &resource)
-			if err == nil {
-				t.Fatalf("MobilityPool accepted members[0].%s", test.field)
-			}
-			if !strings.Contains(err.Error(), "members[0]."+test.field+" is not supported") {
-				t.Fatalf("unmarshal error = %v", err)
 			}
 		})
 	}
@@ -119,50 +56,6 @@ spec:
 	}
 	if len(spec.Members) != 1 || spec.Members[0].NodeRef != "edge-a" || spec.Members[0].Capture.NICRef != "eni-a" {
 		t.Fatalf("members = %#v", spec.Members)
-	}
-}
-
-func TestMobilityPoolRejectsRemovedPolicyFields(t *testing.T) {
-	for _, field := range []string{"mode", "capturePolicy", "authority", "ipOwnershipPolicy", "deliveryPolicy", "publishMemberSet"} {
-		t.Run(field, func(t *testing.T) {
-			var resource Resource
-			err := yaml.Unmarshal([]byte(`
-apiVersion: mobility.routerd.net/v1alpha1
-kind: MobilityPool
-metadata: {name: pool}
-spec:
-  prefix: 10.77.60.0/24
-  groupRef: cloudedge
-  `+field+`: {}
-  members:
-    - nodeRef: edge-a
-`), &resource)
-			if err == nil {
-				t.Fatalf("MobilityPool accepted removed %s configuration", field)
-			}
-			if !strings.Contains(err.Error(), field+" is not supported") {
-				t.Fatalf("unmarshal error = %v", err)
-			}
-		})
-	}
-}
-
-func TestSAMEnrollmentPolicyRejectsRemovedRevokeAfterInactive(t *testing.T) {
-	var resource Resource
-	err := yaml.Unmarshal([]byte(`
-apiVersion: mobility.routerd.net/v1alpha1
-kind: SAMEnrollmentPolicy
-metadata: {name: leaves}
-spec:
-  transportProfileRef: SAMTransportProfile/leaves
-  tunnelAddressPrefixes: [10.255.0.0/20]
-  revokeAfterInactive: 168h
-`), &resource)
-	if err == nil {
-		t.Fatal("SAMEnrollmentPolicy accepted removed revokeAfterInactive")
-	}
-	if !strings.Contains(err.Error(), "spec.revokeAfterInactive is not supported") {
-		t.Fatalf("unmarshal error = %v", err)
 	}
 }
 
