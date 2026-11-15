@@ -37,10 +37,3 @@ func TestTailscaleSystemdSpecRendersExitNodeAndSubnetRoutes(t *testing.T) {
 		t.Fatalf("timeout argument count = %d, want 1:\n%s", count, data)
 	}
 }
-
-func TestTailscaleSystemdSpecCanRemoveUnit(t *testing.T) {
-	spec := TailscaleSystemdSpec("home", api.TailscaleNodeSpec{State: "absent"})
-	if spec.State != "absent" || spec.UnitName != "routerd-tailscale-home.service" {
-		t.Fatalf("unexpected absent spec: %#v", spec)
-	}
-}

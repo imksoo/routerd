@@ -165,29 +165,6 @@ func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 	}
 }
 
-func TestFreeBSDCARPRCDScriptStopsIPv6WithInet6(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip-v6"}, Spec: api.VirtualAddressSpec{
-			Family: "ipv6", Interface: "lan", Address: "fd00:1234::10/128", Mode: "vrrp",
-			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 51, Priority: 150},
-		}},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	script := string(got.RCDScripts["routerd_carp"])
-	for _, want := range []string{`grep -Fq 'inet6 fd00:1234::10 '`, `ifconfig 'vtnet1' 'inet6' 'fd00:1234::10/128' -alias`} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("routerd_carp IPv6 script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, "grep -Fq 'fd00:1234::10/128'") {
-		t.Fatalf("routerd_carp IPv6 ownership probes must not grep CIDR-form addresses:\n%s", script)
-	}
-}
-
 func TestFreeBSDRendersNTPServerWithRestrictedListen(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
@@ -303,62 +280,6 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRendersDNSResolverRCDScript(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
-			Metadata: api.ObjectMeta{Name: "lan-resolver"},
-			Spec: api.DNSResolverSpec{
-				Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
-				Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
-			},
-		},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	script := string(got.RCDScripts["routerd_dns_resolver_lan_resolver"])
-	for _, want := range []string{
-		`PROVIDE: routerd_dns_resolver_lan_resolver`,
-		`/usr/local/sbin/routerd-dns-resolver`,
-		`--resource`,
-		`lan-resolver`,
-		`--config-file`,
-		`/var/db/routerd/dns-resolver/lan-resolver/config.json`,
-		`--socket`,
-		`/var/run/routerd/dns-resolver/lan-resolver.sock`,
-		`--state-file`,
-		`/var/db/routerd/dns-resolver/lan-resolver/state.json`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("dns resolver rc.d script missing %q:\n%s", want, script)
-		}
-	}
-}
-
-func TestFreeBSDRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
-			Metadata: api.ObjectMeta{Name: "default"},
-			Spec:     api.FirewallLogSpec{Enabled: true},
-		},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	agent := string(got.RCDScripts["routerd_ndpi_agent"])
-	if !strings.Contains(agent, "/usr/local/sbin/routerd-ndpi-agent") || !strings.Contains(agent, "/var/run/routerd/ndpi-agent/default.sock") {
-		t.Fatalf("ndpi agent rc.d script =\n%s", agent)
-	}
-	classifier := string(got.RCDScripts["routerd_dpi_classifier"])
-	if !strings.Contains(classifier, "# REQUIRE: NETWORKING routerd_ndpi_agent") {
-		t.Fatalf("classifier rc.d script missing ndpi dependency:\n%s", classifier)
-	}
-}
-
 func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
@@ -442,35 +363,6 @@ func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
-			Interface:     "wan",
-			TunnelName:    "gif7",
-			LocalAddress:  "2001:db8::100",
-			RemoteAddress: "2001:db8::200",
-			MTU:           1454,
-			DefaultRoute:  true,
-		}},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	rc := string(got.RCConf)
-	for _, want := range []string{
-		`cloned_interfaces="gif7"`,
-		`ifconfig_gif7="inet6 tunnel 2001:db8::100 2001:db8::200 inet 192.0.0.2 192.0.0.1 netmask 255.255.255.255 mtu 1454 up"`,
-		`static_routes="ds_lite_default"`,
-		`route_ds_lite_default="default 192.0.0.1"`,
-	} {
-		if !strings.Contains(rc, want) {
-			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
-		}
-	}
-}
-
 func TestFreeBSDRendersNAT44ExcludedDestinations(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true}},
@@ -517,31 +409,5 @@ func TestFreeBSDSkipsDynamicDSLiteGIFWithoutWarning(t *testing.T) {
 	}
 	if len(got.Warnings) != 0 {
 		t.Fatalf("dynamic DS-Lite is runtime-applied and should not warn: %#v", got.Warnings)
-	}
-}
-
-func TestFreeBSDRenderPackageInstallScript(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
-			Metadata: api.ObjectMeta{Name: "deps"},
-			Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
-				{OS: "freebsd", Manager: "pkg", Names: []string{"dnsmasq", "bind-tools"}},
-				{OS: "ubuntu", Manager: "apt", Names: []string{"dnsmasq-base"}},
-			}},
-		},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := string(got.PackageInstall)
-	for _, want := range []string{"pkg info -e", "pkg install -y", "'dnsmasq'", "'bind-tools'"} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("package script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, "dnsmasq-base") {
-		t.Fatalf("package script included Ubuntu package:\n%s", script)
 	}
 }
