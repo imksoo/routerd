@@ -3002,8 +3002,8 @@ function App() {
     const latest = generations.find(row => row.hasYaml);
     if (!latest || !config?.text) return;
     try {
-      const previous = await fetchText(`api/v1/generations/${latest.generation}/config`);
-      setConfigPlanDiff(unifiedLineDiff(`generation-${latest.generation}.yaml`, "current-file.yaml", previous, config.text));
+      const diff = await fetchText(`api/v1/generations/${latest.generation}/diff/current`);
+      setConfigPlanDiff(diff);
       setError("");
     } catch (err) {
       setError(String(err));
@@ -8497,50 +8497,6 @@ function streamAffectsView(view: ViewKey, event: StreamEvent) {
     return view === "overview" || view === "clients" || view === "connections" || view === "firewall";
   }
   return true;
-}
-
-function unifiedLineDiff(fromName: string, toName: string, fromText: string, toText: string) {
-  if (fromText === toText) return `--- ${fromName}\n+++ ${toName}\n# no changes\n`;
-  const fromAll = fromText.replace(/\n$/, "").split(/\n/);
-  const toAll = toText.replace(/\n$/, "").split(/\n/);
-  let start = 0;
-  while (start < fromAll.length && start < toAll.length && fromAll[start] === toAll[start]) start++;
-  let endFrom = fromAll.length;
-  let endTo = toAll.length;
-  while (endFrom > start && endTo > start && fromAll[endFrom - 1] === toAll[endTo - 1]) { endFrom--; endTo--; }
-  const from = fromAll.slice(start, endFrom);
-  const to = toAll.slice(start, endTo);
-  const lines = [`--- ${fromName}`, `+++ ${toName}`];
-  for (let n = 0; n < start; n++) lines.push(` ${fromAll[n]}`);
-  if (from.length > 0 && to.length > Math.floor(1000000 / from.length)) {
-    for (const line of from) lines.push(`-${line}`);
-    for (const line of to) lines.push(`+${line}`);
-    for (let n = endFrom; n < fromAll.length; n++) lines.push(` ${fromAll[n]}`);
-    return `${lines.join("\n")}\n`;
-  }
-  const table = Array.from({ length: from.length + 1 }, () => Array<number>(to.length + 1).fill(0));
-  for (let i = from.length - 1; i >= 0; i--) {
-    for (let j = to.length - 1; j >= 0; j--) {
-      table[i][j] = from[i] === to[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-    }
-  }
-  let i = 0;
-  let j = 0;
-  while (i < from.length || j < to.length) {
-    if (i < from.length && j < to.length && from[i] === to[j]) {
-      lines.push(` ${from[i]}`);
-      i++;
-      j++;
-    } else if (j < to.length && (i === from.length || table[i][j + 1] >= table[i + 1][j])) {
-      lines.push(`+${to[j]}`);
-      j++;
-    } else if (i < from.length) {
-      lines.push(`-${from[i]}`);
-      i++;
-    }
-  }
-  for (let n = endFrom; n < fromAll.length; n++) lines.push(` ${fromAll[n]}`);
-  return `${lines.join("\n")}\n`;
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {

@@ -100,10 +100,13 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 		writeError(w, http.StatusBadRequest, "invalid from generation id")
 		return
 	}
-	to, err := strconv.ParseInt(toText, 10, 64)
-	if err != nil || to <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid to generation id")
-		return
+	var to int64
+	if toText != "current" {
+		to, err = strconv.ParseInt(toText, 10, 64)
+		if err != nil || to <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid to generation id")
+			return
+		}
 	}
 	fromYAML, found, err := reader.GenerationConfig(from)
 	if err != nil {
@@ -119,21 +122,40 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 		writeError(w, http.StatusInternalServerError, "failed to redact from generation config: "+err.Error())
 		return
 	}
-	toYAML, found, err := reader.GenerationConfig(to)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !found {
-		writeError(w, http.StatusConflict, fmt.Sprintf("generation %d has no stored YAML", to))
-		return
+	var toYAML, toName string
+	if toText == "current" {
+		path := strings.TrimSpace(h.opts.ConfigPath)
+		if path == "" {
+			writeError(w, http.StatusNotFound, "config path is unavailable")
+			return
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			writeError(w, http.StatusInternalServerError, readErr.Error())
+			return
+		}
+		toYAML, toName = string(data), "current-file.yaml"
+	} else {
+		toYAML, found, err = reader.GenerationConfig(to)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !found {
+			writeError(w, http.StatusConflict, fmt.Sprintf("generation %d has no stored YAML", to))
+			return
+		}
+		toName = fmt.Sprintf("generation-%d.yaml", to)
 	}
 	toYAML, err = api.RedactYAMLSecrets(toYAML)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to redact to generation config: "+err.Error())
 		return
 	}
-	diff := unifiedDiff(fmt.Sprintf("generation-%d.yaml", from), fmt.Sprintf("generation-%d.yaml", to), fromYAML, toYAML)
+	diff := unifiedDiff(fmt.Sprintf("generation-%d.yaml", from), toName, fromYAML, toYAML)
+	if toText == "current" && fromYAML == toYAML {
+		diff += "# no changes\n"
+	}
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, GenerationDiff{From: from, To: to, Diff: diff})
 		return
