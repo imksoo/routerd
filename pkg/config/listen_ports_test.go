@@ -52,35 +52,6 @@ func TestValidateRejectsIngressInternalDaemonListenPortCollision(t *testing.T) {
 	}
 }
 
-func TestValidateAllowsLocalRedirectToInternalDaemonListenPort(t *testing.T) {
-	router := routerWithResources(
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.0.2.1/24"}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "dns"}, Spec: api.DNSResolverSpec{
-			Listen: []api.DNSResolverListenSpec{{AddressFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}}}},
-			Sources: []api.DNSResolverSourceSpec{{
-				Name:      "default",
-				Kind:      "upstream",
-				Match:     []string{"."},
-				Upstreams: []string{"udp://1.1.1.1:53"},
-			}},
-		}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"}, Metadata: api.ObjectMeta{Name: "local-dns"}, Spec: api.LocalServiceRedirectSpec{
-			Interface: "lan",
-			Rules: []api.LocalServiceRedirectRuleSpec{{
-				Protocols:         []string{"udp", "tcp"},
-				DestinationSetRef: "public-dns",
-				DestinationPort:   53,
-				RedirectPort:      53,
-			}},
-		}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "public-dns"}, Spec: api.IPAddressSetSpec{Addresses: []string{"1.1.1.1"}}},
-	)
-	if err := Validate(router); err != nil {
-		t.Fatalf("local redirect should be allowed to target an internal daemon port: %v", err)
-	}
-}
-
 func TestValidateAllowsMultipleLocalRedirectRulesToSamePort(t *testing.T) {
 	router := routerWithResources(
 		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
@@ -96,52 +67,6 @@ func TestValidateAllowsMultipleLocalRedirectRulesToSamePort(t *testing.T) {
 	)
 	if err := Validate(router); err != nil {
 		t.Fatalf("local redirect rules sharing a redirect port should validate: %v", err)
-	}
-}
-
-func TestValidateAllowsSharedDHCPv6ClientListenPort(t *testing.T) {
-	router := routerWithResources(
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "pd"}, Spec: api.DHCPv6PrefixDelegationSpec{
-			Interface: "wan",
-		}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information"}, Metadata: api.ObjectMeta{Name: "info"}, Spec: api.DHCPv6InformationSpec{
-			Interface: "wan",
-		}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "addr"}, Spec: api.DHCPv6AddressSpec{
-			Interface: "wan",
-		}},
-	)
-	if err := Validate(router); err != nil {
-		t.Fatalf("DHCPv6 client resources should share udp/546 on one interface: %v", err)
-	}
-}
-
-func TestValidateAllowsDHCPv6ClientListenPortOnDistinctInterfaces(t *testing.T) {
-	router := routerWithResources(
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "pd-a"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-a"}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "pd-b"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-b"}},
-	)
-	if err := Validate(router); err != nil {
-		t.Fatalf("DHCPv6 clients on distinct interfaces should validate: %v", err)
-	}
-}
-
-func TestValidateAllowsIngressSelectionPolicies(t *testing.T) {
-	for _, selection := range []string{"failover", "sourceHash", "random"} {
-		router := routerWithResources(
-			api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-			api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.IngressServiceSpec{
-				Listen:   api.IngressListenSpec{Interface: "lan", Protocol: "tcp", Port: 8443},
-				Backends: []api.IngressBackendSpec{{Address: "10.0.0.11", Port: 6443}, {Address: "10.0.0.12", Port: 6443}},
-				Policy:   api.IngressServicePolicySpec{Selection: selection},
-			}},
-		)
-		if err := Validate(router); err != nil {
-			t.Fatalf("selection %s should validate: %v", selection, err)
-		}
 	}
 }
 

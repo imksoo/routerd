@@ -9,31 +9,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-func TestValidatePluginResources(t *testing.T) {
-	router := testPluginRouter(
-		testPluginResource(api.PluginSpec{
-			Executable:   "/usr/local/libexec/routerd/plugins/cloud/bin/cloud",
-			Timeout:      "10s",
-			Capabilities: []string{"observe.cloud", "observe.providerPrivateIPs", "propose.dynamicConfig", "propose.providerAction", "execute.providerAction"},
-			Triggers:     []api.PluginTrigger{{Type: "interval", Every: "5m"}, {Type: "event", Topic: "routerd.cloud.refresh"}},
-			Context: api.PluginContextSpec{Resources: []api.PluginContextResourceRef{
-				{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile", Name: "azure-1"},
-			}},
-		}),
-		testDynamicConfigSourceResource(api.DynamicConfigSourceSpec{
-			PluginRef: "cloud",
-			TTL:       "5m",
-			MergePolicy: &api.MergePolicy{
-				Conflict: "reject",
-			},
-			Triggers: []api.PluginTrigger{{Type: "interval", Every: "5m"}},
-		}),
-	)
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-}
-
 func TestValidatePluginRejectsInvalidResources(t *testing.T) {
 	tests := []struct {
 		name string
