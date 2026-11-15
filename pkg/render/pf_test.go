@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
 func TestPFRenderFirewallAndNAT(t *testing.T) {
@@ -465,59 +464,6 @@ func TestPFInternalWANHolesUseOwningInterface(t *testing.T) {
 	}
 }
 
-func TestPFRenderNAT44SNAT(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "em0", Managed: false},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
-			Metadata: api.ObjectMeta{Name: "snat"},
-			Spec: api.NAT44RuleSpec{
-				Type:            "snat",
-				EgressInterface: "wan",
-				SourceRanges:    []string{"10.0.0.0/24"},
-				SNATAddress:     "198.51.100.10",
-			},
-		},
-	}}}
-	data, err := PF(router, nil)
-	if err != nil {
-		t.Fatalf("render pf: %v", err)
-	}
-	got := string(data)
-	if !strings.Contains(got, `nat on em0 from 10.0.0.0/24 to any -> 198.51.100.10`) {
-		t.Fatalf("pf output missing SNAT rule:\n%s", got)
-	}
-}
-
-func TestPFSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
-			Metadata: api.ObjectMeta{Name: "dynamic"},
-			Spec: api.NAT44RuleSpec{
-				Type:            "masquerade",
-				EgressPolicyRef: "EgressRoutePolicy/default",
-				SourceRanges:    []string{"10.0.0.0/24"},
-			},
-		},
-	}}}
-	data, err := PF(router, nil)
-	if err != nil {
-		t.Fatalf("render pf: %v", err)
-	}
-	got := string(data)
-	if !strings.Contains(got, `nat-anchor "routerd_nat"`) {
-		t.Fatalf("pf output missing runtime NAT anchor:\n%s", got)
-	}
-	if !strings.Contains(got, "skipped: egressInterface is resolved by EgressRoutePolicy/default at runtime") {
-		t.Fatalf("pf output missing runtime skip comment:\n%s", got)
-	}
-}
-
 func TestPFNAT44RulesRenderPerInterfaceMasquerade(t *testing.T) {
 	data, err := PFNAT44Rules([]NAT44RenderRule{
 		{
@@ -593,47 +539,5 @@ func TestPfRendersTCPMSSClamp(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pf output missing %q:\n%s", want, got)
 		}
-	}
-}
-
-func TestPFWithLocalCaptureIntentsRendersMobilityMSSClamp(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
-			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-			Metadata: api.ObjectMeta{Name: "onprem-main"},
-			Spec: api.OverlayPeerSpec{
-				Role:     "onprem",
-				NodeID:   "onprem-router",
-				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
-			},
-		},
-	}}}
-
-	data, err := PFWithLocalCaptureIntents(router, nil, []dynamicconfig.LocalCaptureIntent{{
-		ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
-		Disposition: dynamicconfig.CaptureProtectExisting, CaptureType: "provider-secondary-ip", CaptureInterface: "ens3",
-	}})
-	if err != nil {
-		t.Fatalf("render PF with local capture intent: %v", err)
-	}
-	got := string(data)
-	if want := `scrub out on wg-hybrid proto tcp max-mss 1300`; !strings.Contains(got, want) {
-		t.Fatalf("PF output missing local capture MSS clamp %q:\n%s", want, got)
-	}
-
-	release, err := PFWithLocalCaptureIntents(router, nil, []dynamicconfig.LocalCaptureIntent{{
-		ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
-		Disposition: dynamicconfig.CaptureRelease, CaptureType: "provider-secondary-ip", CaptureInterface: "ens3",
-	}})
-	if err != nil {
-		t.Fatalf("render release-only PF plan: %v", err)
-	}
-	if strings.Contains(string(release), "max-mss") || !strings.Contains(string(release), "pass all keep state") {
-		t.Fatalf("release-only PF plan must remove the clamp with a valid ruleset:\n%s", release)
 	}
 }

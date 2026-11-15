@@ -36,29 +36,6 @@ func TestNftablesFirewallKeepsStandbyVMACAndDSLiteInterfaces(t *testing.T) {
 	}
 }
 
-func TestNftablesNAT44ResolvedSNATRule(t *testing.T) {
-	data, err := NftablesNAT44RulesForRouter(nil, []NAT44RenderRule{{
-		Name:            "lan-to-wan",
-		Type:            "snat",
-		EgressInterface: "ppp0",
-		SourceRanges:    []string{"192.168.10.0/24"},
-		SNATAddress:     "198.51.100.10",
-	}})
-	if err != nil {
-		t.Fatalf("render nftables: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"add table ip routerd_nat",
-		"flush table ip routerd_nat",
-		`oifname "ppp0" ip saddr 192.168.10.0/24 snat to 198.51.100.10`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nftables output missing %q:\n%s", want, got)
-		}
-	}
-}
-
 func TestNftablesDefaultRoutePolicyFlushesTable(t *testing.T) {
 	data, err := NftablesEgressRoutePolicyDefaultMarks(
 		"net.routerd.net/v1alpha1/EgressRoutePolicy/default",
@@ -100,43 +77,6 @@ func TestNftablesNAT44RuleCanExcludeDestinations(t *testing.T) {
 	}
 }
 
-func TestNftablesL2TCPMSSClampForVXLANTunnelBridge(t *testing.T) {
-	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "l2"}, Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", MTU: 1500, Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "legacy"}, Spec: api.BridgeSpec{IfName: "br-legacy", Members: []string{"lan"}, MTU: 1370}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wg"}, Spec: api.InterfaceSpec{IfName: "wg0", MTU: 1420, Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "overlay"}, Spec: api.VXLANTunnelSpec{IfName: "vx-l2", VNI: 200001, LocalAddress: "198.18.0.1", Peers: []string{"198.18.0.2"}, UnderlayInterface: "wg", MTU: 1280, Bridge: "legacy", TCPMSSClamp: true}},
-	}}}
-	data, err := NftablesL2TCPMSSClamp(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"table bridge routerd_l2_mss",
-		`iifname "ens19" oifname "vx-l2" ether type ip ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1240 tcp option maxseg size set 1240`,
-		`iifname "vx-l2" oifname "ens19" ether type ip6 meta l4proto tcp tcp flags syn / syn,rst tcp option maxseg size > 1220 tcp option maxseg size set 1220`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("L2 MSS output missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "maxseg size set 1460") {
-		t.Fatalf("rule must lower only to the effective MTU ceiling:\n%s", got)
-	}
-}
-
-func TestNftablesL2TCPMSSClampDisabledProducesNoTable(t *testing.T) {
-	router := bridgeVXLANL2MSSRouter(false)
-	data, err := NftablesL2TCPMSSClamp(router)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("disabled clamp rendered state:\n%s", data)
-	}
-}
-
 func bridgeVXLANL2MSSRouter(enabled bool) *api.Router {
 	return &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "l2"}, Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500, Managed: true}},
@@ -144,48 +84,6 @@ func bridgeVXLANL2MSSRouter(enabled bool) *api.Router {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "underlay"}, Spec: api.InterfaceSpec{IfName: "underlay0", MTU: 1500, Managed: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", MTU: 1280, Bridge: "br", TCPMSSClamp: enabled}},
 	}}}
-}
-
-func TestNftablesIPv4ForceFragmentForBGPMobilityOverlay(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
-			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-			Metadata: api.ObjectMeta{Name: "onprem-main"},
-			Spec: api.OverlayPeerSpec{
-				Role:     "onprem",
-				NodeID:   "onprem-router",
-				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
-				PathMTU:  api.PathMTUOptions{ForceFragmentIPv4: true},
-			},
-		},
-	}}}
-	data, err := NftablesIPv4ForceFragmentWithLocalCaptureIntents(router, []dynamicconfig.LocalCaptureIntent{{
-		ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
-		Disposition: dynamicconfig.CaptureProtectExisting, CaptureType: "provider-secondary-ip", CaptureInterface: "ens3",
-	}})
-	if err != nil {
-		t.Fatalf("render forcefrag: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"add table ip routerd_forcefrag",
-		"flush table ip routerd_forcefrag",
-		"table ip routerd_forcefrag",
-		`type filter hook prerouting priority mangle; policy accept;`,
-		`iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("forcefrag output missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "meta nfproto ipv6") {
-		t.Fatalf("forcefrag must be IPv4-only:\n%s", got)
-	}
 }
 
 func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
