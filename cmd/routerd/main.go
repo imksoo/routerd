@@ -37,7 +37,6 @@ var (
 	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
 	defaultStatePath           = platformDefaults.DBFile()
 	pdClientLeaseDir           = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
-	legacyFreeBSDStateDir      = "/var/lib/routerd"
 )
 
 func main() {
