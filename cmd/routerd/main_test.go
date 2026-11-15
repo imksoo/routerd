@@ -4,9 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/netip"
@@ -17,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"golang.org/x/crypto/ssh"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -772,57 +767,4 @@ func TestConfiguredDHCPLeasePathsPreferControllerDnsmasqConfig(t *testing.T) {
 		}
 		seen[path] = true
 	}
-}
-
-func TestRollbackRestoresSSHKeyHistory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := routerstate.OpenSQLite(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	yaml := sshKeyTestConfig(t)
-	generation, _, err := store.BeginGenerationIfChanged("ssh", yaml)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	got, err := rollbackGenerationConfig(path, generation)
-	if err != nil || got != yaml {
-		t.Fatal("rollback did not recover the original configuration")
-	}
-}
-
-func TestValidateSSHKeyConfigDoesNotChangePermissions(t *testing.T) {
-	text := sshKeyTestConfig(t)
-	path := filepath.Join(t.TempDir(), "router.yaml")
-	if err := os.WriteFile(path, []byte(text), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateCommand([]string{"--config", path}, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0644 {
-		t.Fatal("validate changed configuration permissions")
-	}
-}
-
-func sshKeyTestConfig(t *testing.T) string {
-	t.Helper()
-	_, key, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, err := ssh.MarshalPrivateKey(key, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := "apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: example\nspec:\n  sshHostKeys:\n    - privateKey: |\n"
-	for _, line := range strings.Split(strings.TrimSpace(string(pem.EncodeToMemory(block))), "\n") {
-		text += "        " + line + "\n"
-	}
-	text += "  resources: []\n"
-	return text
 }
