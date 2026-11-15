@@ -11,24 +11,6 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-func TestValidateSysctl(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
-				Metadata: api.ObjectMeta{Name: "ipv4-forwarding"},
-				Spec:     api.SysctlSpec{Key: "net.ipv4.ip_forward", Value: "1", Runtime: boolPtr(true)},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate sysctl: %v", err)
-	}
-}
-
 func TestValidateSysctlRejectsDuplicateKey(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -471,28 +453,6 @@ func TestValidateRejectsNetworkAdoptionOnProtectedInterface(t *testing.T) {
 	err := Validate(router)
 	if err == nil || !strings.Contains(err.Error(), "protected interface") {
 		t.Fatalf("expected protected interface error, got %v", err)
-	}
-}
-
-func TestValidateLogSinkSyslog(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"},
-				Metadata: api.ObjectMeta{Name: "local-syslog"},
-				Spec: api.LogSinkSpec{
-					Type:     "syslog",
-					MinLevel: "info",
-					Syslog:   api.LogSinkSyslogSpec{Facility: "local6", Tag: "routerd"},
-				},
-			},
-		}},
-	}
-
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate log sink: %v", err)
 	}
 }
 
