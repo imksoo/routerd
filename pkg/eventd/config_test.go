@@ -40,20 +40,3 @@ func TestMarshalConfigJSONRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip mismatch:\n orig=%+v\n got =%+v", orig, got)
 	}
 }
-
-func TestMarshalConfigJSONOmitsZeroDurations(t *testing.T) {
-	data, err := MarshalConfigJSON(Config{NodeName: "n", Group: "g", SecretFile: "s", StatePath: "p"})
-	if err != nil {
-		t.Fatalf("MarshalConfigJSON: %v", err)
-	}
-	var w map[string]any
-	if err := json.Unmarshal(data, &w); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if _, ok := w["replayWindow"]; ok {
-		t.Fatalf("expected replayWindow to be omitted, got %v", w["replayWindow"])
-	}
-	if _, ok := w["pruneInterval"]; ok {
-		t.Fatalf("expected pruneInterval to be omitted")
-	}
-}

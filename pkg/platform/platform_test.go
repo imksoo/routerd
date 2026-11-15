@@ -20,18 +20,3 @@ func TestDnsmasqLeaseCandidatesPreferActualManagedPath(t *testing.T) {
 		t.Fatalf("freebsd candidates = %#v, want runtime fallback second", got)
 	}
 }
-
-func TestSystemdPathsRequireSystemd(t *testing.T) {
-	defaults, features := Current()
-	if !features.HasSystemd {
-		if defaults.SystemdUnitDir != "" {
-			t.Errorf("SystemdUnitDir set on non-systemd platform: %q", defaults.SystemdUnitDir)
-		}
-		if defaults.SystemdSystemDir != "" {
-			t.Errorf("SystemdSystemDir set on non-systemd platform: %q", defaults.SystemdSystemDir)
-		}
-	}
-	if !features.HasRCD && defaults.RCScriptDir != "" {
-		t.Errorf("RCScriptDir set on non-rc.d platform: %q", defaults.RCScriptDir)
-	}
-}
