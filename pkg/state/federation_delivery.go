@@ -45,19 +45,6 @@ type DeliveryRecord struct {
 	EventExpiresAt time.Time
 }
 
-func (s *SQLiteStore) ensureEventDeliveryColumns() error {
-	hasCol, err := s.tableHasColumn("event_deliveries", "event_expires_at")
-	if err != nil {
-		return err
-	}
-	if !hasCol {
-		if _, err := s.db.Exec(`ALTER TABLE event_deliveries ADD COLUMN event_expires_at INTEGER`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // RecordDelivery enqueues a (event_id, peer) delivery row in status pending with
 // attempts=0. It is idempotent: if the row already exists it is a no-op
 // (ON CONFLICT(event_id, peer) DO NOTHING), matching at-least-once enqueue.
