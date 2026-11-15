@@ -19,8 +19,8 @@ an acceptance criterion, pending blocker, or reason to ask the owner again in
 the current work. Do not create cloud resources or run chargeable cloud tests.
 Keep its existing code and shared SAM dependencies intact; shelving is not a
 request to remove functionality. Local SAM/IPIP/BGP used by k8s-rt and pve-rt
-remains in scope. If Cloud SAM is explicitly resumed, use
-nwadmin03.lain.local:/home/imksoo/routerd-labs as a reference and minimize cost.
+remains in scope. If Cloud SAM is explicitly resumed, ask the owner for the
+reference environment and minimize cost.
 A Kind that appears in none of the listed hosts' configurations may belong to
 shelved Cloud SAM. Absence from those configurations alone does not make a Kind
 removable; removing a Kind needs the owner's decision for that Kind.
