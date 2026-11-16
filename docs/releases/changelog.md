@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261116.2323
+
 - Unify Linux installation and upgrades on Debian packages, preserving existing configuration and managing service shutdown and startup through package installation.
 
 ## v20261115.1721

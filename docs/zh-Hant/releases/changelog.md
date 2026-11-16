@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261116.2323
+
 - 將Linux安裝與更新統一為Debian套件，保留既有設定，並在套件安裝時管理服務的停止與啟動。
 
 ## v20261115.1721
