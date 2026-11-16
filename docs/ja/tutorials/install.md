@@ -20,25 +20,23 @@ VM には、次のように役割を分けると安全です。
 WAN と LAN は、普段のネットワークから分けます。WAN 用 NIC や LAN 用 NIC が
 止まっても、コンソールから VM を操作できることを先に確かめてください。
 
-## 1. リリースアーカイブを入手する
+## 1. Debianパッケージを入れる
 
-次は Linux amd64 の例です。まず [GitHub Releases](https://github.com/imksoo/routerd/releases)
-で、使う版と CPU を確認してください。
+次は Linux amd64 の例です。版は [GitHub Releases](https://github.com/imksoo/routerd/releases)
+で確認できます。
 
 ```sh
-RELEASE=v20260707.1514
-curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
-curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+curl -fLO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb
+curl -fLO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb.sha256
+sha256sum -c routerd-linux-amd64.deb.sha256
+sudo apt install ./routerd-linux-amd64.deb
 ```
 
 arm64 の Ubuntu Server では、ファイル名の `linux-amd64` を `linux-arm64` に
-変えます。`install.sh` は必要な実行時パッケージを確認し、`routerd` と
+変えます。apt が依存する実行時パッケージを入れ、`routerd` と
 `routerctl` を `/usr/local/sbin` に置きます。Go や Makefile は不要です。
 
-新しい導入では、インストーラーだけでサービスは起動しません。設定を読んで
+新しい導入では、設定ファイルがまだないのでサービスは起動しません。設定を読んで
 安全を確かめてから、あとで自分で起動します。
 
 ```sh

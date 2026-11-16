@@ -14,8 +14,8 @@ behavior on every OS.
 ## Linux (Ubuntu / Debian)
 
 Linux with systemd is the primary platform. Release installs land under `/usr/local` by default.
-Install from the Linux release archive and run `sudo ./install.sh`.
-The installer can install runtime packages with `apt-get`, `dnf`, or `pacman`.
+Install the Debian package from the release with `sudo apt install ./routerd-linux-amd64.deb`.
+It depends on `ca-certificates`, `iproute2`, `nftables`, and `dnsmasq-base`.
 
 routerd uses the following OS surfaces on Linux:
 
@@ -31,7 +31,6 @@ routerd uses the following OS surfaces on Linux:
 - WireGuard, Tailscale, strongSwan, radvd
 
 Even on Ubuntu, routerd does not assume packages are pre-installed.
-For first bootstrap, `install.sh` installs a practical default set.
 For ongoing declarative management, declare dependencies with the `Package` resource.
 The reference list:
 
@@ -93,8 +92,8 @@ FreeBSD uses the same routerd resource model as Ubuntu, mapped onto FreeBSD
 host mechanisms. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps
 a lease bound. routerd maps resources to FreeBSD-native `rc.conf`, `rc.d`,
 `pf`, `mpd5`, `ifconfig`, and dnsmasq surfaces instead of using Linux tools.
-Install from the FreeBSD release archive and run `sudo ./install.sh`.
-The installer uses `pkg` for ports packages and leaves base-system tools alone.
+Place the files from the FreeBSD release archive and install ports packages with `pkg`,
+as described in [FreeBSD getting started](tutorials/freebsd-getting-started.md).
 
 Implemented:
 

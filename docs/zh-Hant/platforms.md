@@ -13,8 +13,8 @@ routerd 以跨 OS 為前提設計。
 
 以使用 systemd 的 Linux 為主要目標。
 發布安裝程式的預設安裝位置為 `/usr/local` 之下。
-展開 Linux 用的發布封存檔後，執行 `sudo ./install.sh`。
-安裝程式可透過 `apt-get`、`dnf`、`pacman` 之一安裝執行時期套件。
+使用 `sudo apt install ./routerd-linux-amd64.deb` 安裝發布的 Debian 套件。
+相依套件為 `ca-certificates`、`iproute2`、`nftables`、`dnsmasq-base`。
 
 routerd 在 Linux 上使用的 OS 功能如下。
 
@@ -28,7 +28,6 @@ routerd 在 Linux 上使用的 OS 功能如下。
 - WireGuard、Tailscale、strongSwan、radvd
 
 即使在 Ubuntu 上，也不預設套件已預先安裝。
-初次準備時，`install.sh` 會安裝實用的預設套件組合。
 持續的宣告式管理請透過 `Package` 資源宣告相依關係。
 參考套件清單如下。
 
@@ -85,8 +84,8 @@ FreeBSD 同樣使用與 Ubuntu 相同的 routerd 資源模型。
 套用目標為 FreeBSD 的主機機制。
 DHCPv6-PD client 透過 `daemon(8)` 執行，穩定維持租約。
 routerd 不使用 Linux 用的機制，而是將資源對應至 FreeBSD 的 `rc.conf`、`rc.d`、`pf`、`mpd5`、`ifconfig`、dnsmasq。
-展開 FreeBSD 用的發布封存檔後，執行 `sudo ./install.sh`。
-安裝程式透過 `pkg` 安裝 ports 套件，並只對 base system 的指令進行確認，不另行安裝。
+放置 FreeBSD 用發布封存檔中的檔案，並透過 `pkg` 安裝 ports 套件。
+步驟見 [FreeBSD 入門](tutorials/freebsd-getting-started.md)。
 
 已實作的項目如下。
 

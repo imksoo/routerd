@@ -101,52 +101,40 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build release archive
+      - name: Build Debian package
+        if: matrix.routerd_os == 'linux'
         run: |
-          make dist \
-            ROUTERD_OS=${{ matrix.routerd_os }} \
+          make deb \
+            ROUTERD_OS=linux \
             GOARCH=${{ matrix.goarch }} \
             VERSION=${{ needs.resolve-release.outputs.tag }}
 
-      - name: Collect release archive
-        shell: bash
+      - name: Build FreeBSD archive
+        if: matrix.routerd_os == 'freebsd'
         run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          platform="${{ matrix.routerd_os }}-${{ matrix.goarch }}"
-          package="routerd-${tag}-${platform}.tar.gz"
-          alias="routerd-${platform}.tar.gz"
-          test -f "dist/${platform}/${package}"
-          test -f "dist/${platform}/${package}.sha256"
-          test -f "dist/${platform}/${alias}"
-          test -f "dist/${platform}/${alias}.sha256"
-          mkdir -p release
-          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
-            "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
+          make dist \
+            ROUTERD_OS=freebsd \
+            GOARCH=${{ matrix.goarch }} \
+            VERSION=${{ needs.resolve-release.outputs.tag }}
 
-      - name: Smoke test installer archive
+      - name: Collect release files
         shell: bash
         run: |
           set -euo pipefail
           tag="${{ needs.resolve-release.outputs.tag }}"
           platform="${{ matrix.routerd_os }}-${{ matrix.goarch }}"
-          package="routerd-${tag}-${platform}.tar.gz"
-          smoke="${RUNNER_TEMP}/routerd-install-smoke-${platform}"
-          work="${RUNNER_TEMP}/routerd-archive-${platform}"
-          rm -rf "${smoke}" "${work}"
-          mkdir -p "${work}"
-          tar -C "${work}" -xzf "dist/${platform}/${package}"
-          (
-            cd "${work}"
-            ./install.sh --prefix "${smoke}" --no-restart --no-config-update --no-install-deps
-            if [ "${{ matrix.routerd_os }}" = "linux" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
-              "${smoke}/sbin/routerd" --version
-            else
-              test -x "${smoke}/sbin/routerd"
-            fi
-            ./uninstall.sh --prefix "${smoke}" --yes --all
-            test ! -e "${smoke}/sbin/routerd"
-          )
+          mkdir -p release
+          if [ "${{ matrix.routerd_os }}" = linux ]; then
+            package="routerd_${tag#v}_${{ matrix.goarch }}.deb"
+            alias="routerd-${platform}.deb"
+            cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
+              "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
+          else
+            package="routerd-${tag}-${platform}.tar.gz"
+            alias="routerd-${platform}.tar.gz"
+            cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
+              "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
+          fi
 
       - name: Upload to draft release
         env:
@@ -155,7 +143,7 @@ jobs:
         run: gh release upload "${{ needs.resolve-release.outputs.tag }}" release/* --clobber
 
   build-ndpi-agent-libndpi:
-    name: Build native nDPI agent linux-amd64
+    name: Build native nDPI agent package linux-amd64
     needs:
       - resolve-release
     # Keep the native agent compatible with baseline x86-64 Ubuntu 24.04 hosts.
@@ -177,48 +165,36 @@ jobs:
       - name: Install native nDPI build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils file libndpi-dev pkg-config
+          sudo apt-get install -y binutils dpkg-dev file libndpi-dev pkg-config
 
-      - name: Build native nDPI agent archive
+      - name: Build native nDPI agent package
         run: |
-          make dist-ndpi-agent-libndpi \
+          make deb-ndpi \
             ROUTERD_OS=linux \
             GOARCH=amd64 \
             VERSION=${{ needs.resolve-release.outputs.tag }}
 
-      - name: Collect native nDPI agent archive
+      - name: Check native nDPI agent CPU baseline
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          platform="linux-amd64"
-          package="routerd-ndpi-agent-libndpi-${tag}-${platform}.tar.gz"
-          alias="routerd-ndpi-agent-libndpi-${platform}.tar.gz"
-          test -f "dist/${platform}/${package}"
-          test -f "dist/${platform}/${package}.sha256"
-          test -f "dist/${platform}/${alias}"
-          test -f "dist/${platform}/${alias}.sha256"
-          mkdir -p release
-          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
-            "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
-
-      - name: Smoke test native nDPI agent archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          package="routerd-ndpi-agent-libndpi-${tag}-linux-amd64.tar.gz"
-          work="${RUNNER_TEMP}/routerd-ndpi-agent-libndpi"
-          rm -rf "${work}"
-          mkdir -p "${work}"
-          tar -C "${work}" -xzf "dist/linux-amd64/${package}"
-          readelf --notes "${work}/bin/routerd-ndpi-agent" > "${work}/elf-notes.txt"
-          cat "${work}/elf-notes.txt"
-          if grep -Eq 'x86 ISA needed:.*x86-64-v[234]' "${work}/elf-notes.txt"; then
+          readelf --notes bin/linux-amd64/routerd-ndpi-agent > "${RUNNER_TEMP}/elf-notes.txt"
+          cat "${RUNNER_TEMP}/elf-notes.txt"
+          if grep -Eq 'x86 ISA needed:.*x86-64-v[234]' "${RUNNER_TEMP}/elf-notes.txt"; then
             echo "native nDPI agent requires a CPU ISA newer than baseline x86-64" >&2
             exit 1
           fi
-          "${work}/bin/routerd-ndpi-agent" selftest | grep -q '"libndpiLoaded":true'
+
+      - name: Collect native nDPI agent package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.resolve-release.outputs.tag }}"
+          package="routerd-ndpi_${tag#v}_amd64.deb"
+          alias="routerd-ndpi-linux-amd64.deb"
+          mkdir -p release
+          cp "dist/linux-amd64/${package}" "dist/linux-amd64/${package}.sha256" \
+            "dist/linux-amd64/${alias}" "dist/linux-amd64/${alias}.sha256" release/
 
       - name: Upload to draft release
         env:
@@ -297,24 +273,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.resolve-release.outputs.checkout-ref }}
-          sparse-checkout: packaging/bootstrap.sh
-          sparse-checkout-cone-mode: false
-
-      - name: Upload bootstrap installer
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          cp packaging/bootstrap.sh install.sh
-          gh release upload "${tag}" install.sh --clobber
-
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

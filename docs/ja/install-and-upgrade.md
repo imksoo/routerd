@@ -1,14 +1,15 @@
 # インストールと更新
 
-公式Linux amd64アーカイブを取得し、チェックサムを検証します。別のOS・アーキテクチャではReleasesから対応するものを選びます。インストーラーは既存の設定を維持します。
+Debianパッケージを取得し、チェックサムを検証します。arm64では `linux-amd64` を `linux-arm64` に変えます。依存するOSパッケージはaptが導入し、既存の設定は維持します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb.sha256
+sha256sum -c routerd-linux-amd64.deb.sha256
+sudo apt install ./routerd-linux-amd64.deb
 ```
+
+更新も、新しいパッケージを同じ手順で入れます。ファイルを置き換える前に、旧版のパッケージがrouterdと補助サービスを止めます。新版のパッケージは `/usr/local/etc/routerd/router.yaml` があればrouterdを起動し、routerdが必要な補助サービスを起動します。版を固定する場合は、`routerd_YYYYMMDD.HHMM_amd64.deb` のような版番号付きのファイルを使います。削除は `sudo apt remove routerd` です。FreeBSDは[FreeBSD入門](tutorials/freebsd-getting-started.md)を参照してください。
 
 [Releases](https://github.com/imksoo/routerd/releases/latest)
 

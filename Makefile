@@ -38,9 +38,6 @@ AZURE_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/azure-provider-executor
 OCI_PROVIDER_EXECUTOR_BIN := $(BUILDDIR)/oci-provider-executor
 ROUTERD_PROVIDER_EXECUTOR_BINS := $(AWS_PROVIDER_EXECUTOR_BIN) $(AZURE_PROVIDER_EXECUTOR_BIN) $(OCI_PROVIDER_EXECUTOR_BIN)
 ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_BGP_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_RA_OBSERVER_BIN) $(ROUTERD_ARP_OBSERVER_BIN) $(ROUTERD_PPPOE_CLIENT_BIN) $(ROUTERD_EVENTD_BIN) $(ROUTERD_VRRP_VMAC_BIN) $(ROUTERD_PROVIDER_EXECUTOR_BINS)
-ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT := $(DISTDIR)/ndpi-agent-libndpi-package
-ROUTERD_NDPI_AGENT_LIBNDPI_TAR := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(VERSION)-$(DISTPLATFORM).tar.gz
-ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(DISTPLATFORM).tar.gz
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -55,7 +52,7 @@ CONTROL_SCHEMA := routerd-control-v1alpha1.schema.json
 CONTROL_OPENAPI_SCHEMA := routerd-control-openapi-v1alpha1.json
 
 
-.PHONY: build-routerd test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema generate-resource-docs sync-website-schemas check-schema check-website-schemas website-build third-party-licenses check-build-deps dist deb deb-ndpi dist-ndpi-agent-libndpi live-iso validate-example release clean
+.PHONY: build-routerd test check-version-ldflags build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-freebsd-cross-compile check-linux-static check-ndpi-agent-libndpi cloudedge-acceptance-lint webconsole-build generate-schema generate-resource-docs sync-website-schemas check-schema check-website-schemas website-build third-party-licenses check-build-deps dist deb deb-ndpi live-iso validate-example release clean
 
 test: check-version-ldflags
 	go test ./...
@@ -127,7 +124,7 @@ check-linux-static:
 	done
 
 check-ndpi-agent-libndpi:
-	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
+	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent is Linux-only" >&2; exit 2; fi
 	@if [ ! -x "$(ROUTERD_NDPI_AGENT_BIN)" ]; then echo "missing binary: $(ROUTERD_NDPI_AGENT_BIN)" >&2; exit 1; fi
 	@if ! command -v file >/dev/null 2>&1; then echo "missing file(1), cannot verify libndpi agent binary" >&2; exit 1; fi
 	@info=$$(file "$(ROUTERD_NDPI_AGENT_BIN)"); \
@@ -227,8 +224,6 @@ dist:
 	install -m 0755 $(OCI_PROVIDER_EXECUTOR_BIN) $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor
 	install -m 0644 examples/plugins/oci-provider-executor/plugin.yaml $(DISTROOT)/libexec/routerd/plugins/oci-provider-executor/plugin.yaml
 	install -m 0755 examples/cloudedge-mobility-demo/plugins/provider-private-ip-inventory $(DISTROOT)/libexec/routerd/plugins/provider-private-ip-inventory
-	install -m 0755 packaging/install.sh $(DISTROOT)/install.sh
-	install -m 0755 packaging/uninstall.sh $(DISTROOT)/uninstall.sh
 	install -d $(DISTROOT)/etc/routerd
 	install -m 0644 examples/router-lab.yaml $(DISTROOT)/etc/routerd/router.yaml.sample
 	install -d $(DISTROOT)/share/doc
@@ -243,7 +238,7 @@ dist:
 		install -m 0555 contrib/freebsd/routerd $(DISTROOT)/rc.d/routerd; \
 	else \
 		install -d $(DISTROOT)/systemd; \
-		install -m 0644 contrib/systemd/routerd.service contrib/systemd/routerd-bgp.service $(DISTROOT)/systemd/; \
+		install -m 0644 contrib/systemd/routerd.service $(DISTROOT)/systemd/; \
 	fi
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .
@@ -256,30 +251,17 @@ dist:
 deb: dist
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "deb requires ROUTERD_OS=linux" >&2; exit 1; fi
 	packaging/debian/build.sh $(DISTROOT) $(DISTDIR)/routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(VERSION) $(DISTARCH)
+	cp $(DISTDIR)/routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(DISTDIR)/routerd-$(DISTPLATFORM).deb
+	cd $(DISTDIR) && sha256sum routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb > routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb.sha256 && sha256sum routerd-$(DISTPLATFORM).deb > routerd-$(DISTPLATFORM).deb.sha256
 
 deb-ndpi:
 	@if [ "$(ROUTERD_OS)" != "linux" ] || [ "$(DISTARCH)" != "$$(dpkg --print-architecture)" ]; then echo "deb-ndpi requires a native Linux build" >&2; exit 1; fi
 	$(MAKE) build-ndpi-agent-libndpi
+	$(MAKE) check-ndpi-agent-libndpi
 	install -d $(DISTDIR)
 	packaging/debian/build-ndpi.sh $(ROUTERD_NDPI_AGENT_BIN) $(DISTDIR)/routerd-ndpi_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(VERSION) $(DISTARCH)
-
-dist-ndpi-agent-libndpi:
-	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
-	rm -rf $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR).sha256 $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS).sha256
-	$(MAKE) build-ndpi-agent-libndpi
-	$(MAKE) check-ndpi-agent-libndpi
-	install -d $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/bin
-	install -m 0755 $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/bin/routerd-ndpi-agent
-	install -d $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc
-	install -m 0644 docs/operations/ndpi-agent-libndpi.md $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/README.md
-	printf '%s\n' '$(VERSION)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/VERSION
-	printf '%s\n' '$(DISTPLATFORM)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/TARGET
-	install -d $(DISTDIR)
-	tar -C $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) -czf $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) .
-	scripts/check-tar-safe-paths.sh $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)
-	cp $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)
-	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
-	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
+	cp $(DISTDIR)/routerd-ndpi_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(DISTDIR)/routerd-ndpi-$(DISTPLATFORM).deb
+	cd $(DISTDIR) && sha256sum routerd-ndpi_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb > routerd-ndpi_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb.sha256 && sha256sum routerd-ndpi-$(DISTPLATFORM).deb > routerd-ndpi-$(DISTPLATFORM).deb.sha256
 
 live-iso:
 	VERSION=$(VERSION) DISTBASE=$(DISTBASE) scripts/build-live-iso.sh

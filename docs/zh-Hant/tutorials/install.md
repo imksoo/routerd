@@ -8,15 +8,13 @@ sidebar_position: 1
 最快的入門方式是在隔離的 Ubuntu Server VM 使用發布封存檔。路由器主機不需要 Go、Makefile 或原始碼樹。以下使用目前建議的穩定里程碑 v20260707.1514。
 
 ```bash
-RELEASE=v20260707.1514
-curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
-curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+curl -fLO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb
+curl -fLO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb.sha256
+sha256sum -c routerd-linux-amd64.deb.sha256
+sudo apt install ./routerd-linux-amd64.deb
 ```
 
-arm64 主機請使用 `routerd-linux-arm64.tar.gz`。安裝腳本會放入執行檔與 systemd 範本、建立設定樣本，但不會覆寫既有 `/usr/local/etc/routerd/router.yaml`。
+arm64 主機請使用 `routerd-linux-arm64.deb`。套件會放入執行檔與 systemd unit、建立設定樣本，但不會覆寫既有 `/usr/local/etc/routerd/router.yaml`。
 
 ```bash
 routerd --version

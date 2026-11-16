@@ -8,8 +8,8 @@ sidebar_position: 90
 This example configures an already installed Tailscale client to advertise the
 router as both a subnet router and an exit node. The YAML contains a
 `TailscaleNode`; it does not contain a `Package` resource that installs
-Tailscale for you. Install it first (for example, with `install.sh
---with-tailscale`) and follow your tailnet's enrollment procedure.
+Tailscale for you. Install it first (for example, from Tailscale's package repository) and
+follow your tailnet's enrollment procedure.
 
 The complete, validated YAML is in `examples/tailscale-exit-subnet.yaml`.
 

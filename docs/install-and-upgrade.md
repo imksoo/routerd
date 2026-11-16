@@ -1,14 +1,15 @@
 # Install and upgrade
 
-Download the official Linux amd64 archive and verify its checksum. For another architecture or OS, select the corresponding archive from Releases. The installer preserves an existing configuration.
+Download the Debian package and verify its checksum. On arm64, replace `linux-amd64` with `linux-arm64`. apt installs the OS packages it depends on and keeps an existing configuration.
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb.sha256
+sha256sum -c routerd-linux-amd64.deb.sha256
+sudo apt install ./routerd-linux-amd64.deb
 ```
+
+Upgrade by installing the newer package the same way. Before the files are replaced, the old package stops routerd and its helper services. The new package starts routerd again when `/usr/local/etc/routerd/router.yaml` exists, and routerd starts the helpers it needs. To pin a version, use a versioned file such as `routerd_YYYYMMDD.HHMM_amd64.deb`. Remove routerd with `sudo apt remove routerd`. For FreeBSD, see [FreeBSD getting started](tutorials/freebsd-getting-started.md).
 
 [Releases](https://github.com/imksoo/routerd/releases/latest)
 

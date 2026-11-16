@@ -17,24 +17,26 @@ dnsmasq 設定、`mpd5.conf`，以及 DS-Lite 用的動態 `ifconfig gif` 操作
 ## 1. 從發布封存檔安裝
 
 從 [GitHub Releases](https://github.com/imksoo/routerd/releases) 取得 FreeBSD 用的
-封存檔，並在路由器上執行隨附的安裝程式。
+封存檔，在路由器上放置檔案，並安裝 ports 套件。
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
-tar -xzf routerd-freebsd-amd64.tar.gz
-sudo ./install.sh
+mkdir routerd && tar -xzf routerd-freebsd-amd64.tar.gz -C routerd
+sudo install -m 0755 routerd/bin/* /usr/local/sbin/
+sudo install -d /usr/local/libexec/routerd /usr/local/etc/routerd
+sudo cp -R routerd/libexec/routerd/plugins /usr/local/libexec/routerd/
+sudo install -m 0555 routerd/rc.d/routerd /usr/local/etc/rc.d/routerd
+sudo install -m 0644 routerd/etc/routerd/router.yaml.sample /usr/local/etc/routerd/
+sudo pkg install ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
 ```
 
-`install.sh` 會安裝 FreeBSD 通常所需的套件。
-對象為 `ca_root_nss`、`curl`、`dnsmasq`、`wireguard-tools`、`mpd5`、
-`bind-tools`、`tcpdump`、`jq`、`chrony`、`strongswan`。
-同時安裝 Tailscale 時，使用 `sudo ./install.sh --with-tailscale`。
+`pkg install` 一行會安裝通常所需的套件。
+使用 Tailscale 時，請一併加入 `tailscale`。
 FreeBSD 的 base system 包含 `ifconfig`、`route`、`sysctl`、`service`、`sysrc`、
 `pfctl`、`pflog0`、`netstat`、`sockstat`、`ping`、`traceroute`。
-相依套件清單可透過 `./install.sh --list-deps` 確認。
 
 ## 2. 放置路由器設定
 
