@@ -1156,7 +1156,9 @@ fi
 mkdir "$DEPLOY_DIR/tree"
 tar -xzf "$DEPLOY_DIR/artifact.tar.gz" -C "$DEPLOY_DIR/tree"
 cd "$DEPLOY_DIR/tree"
-sudo ./install.sh --yes --prefix /usr/local --no-restart --no-config-update
+sudo install -m 0755 bin/* /usr/local/sbin/
+sudo install -d /usr/local/libexec/routerd
+sudo cp -R libexec/routerd/plugins /usr/local/libexec/routerd/
 sudo cmp -s bin/routerd /usr/local/sbin/routerd
 sudo cmp -s bin/routerctl /usr/local/sbin/routerctl
 sudo cmp -s "$DEPLOY_DIR/router.yaml" /usr/local/etc/routerd/router.yaml

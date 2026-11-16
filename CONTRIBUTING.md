@@ -17,13 +17,13 @@ make check-schema
 make validate-example
 ```
 
-End users install from release archives with `install.sh`. Do not add a second
-installer path to the Makefile.
+End users install the Debian package (`make deb`) on Linux and the release
+archive on FreeBSD. Do not add a second installer path.
 
 If you changed shell scripts, also run:
 
 ```sh
-shellcheck packaging/install.sh packaging/uninstall.sh scripts/*.sh
+shellcheck packaging/debian/build.sh packaging/debian/build-ndpi.sh packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm scripts/*.sh
 ```
 
 If you changed resource API fields, regenerate the schema and resource

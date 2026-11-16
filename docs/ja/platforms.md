@@ -13,8 +13,8 @@ routerd は cross-OS を前提に設計されています。
 
 systemd を使う Linux が主対象です。
 リリースインストーラーの配置先は、既定で `/usr/local` 配下です。
-Linux 用のリリースアーカイブを展開し、`sudo ./install.sh` を実行します。
-インストーラーは `apt-get`、`dnf`、`pacman` のいずれかで、ランタイムのパッケージを導入できます。
+リリースの Debian パッケージを `sudo apt install ./routerd-linux-amd64.deb` で導入します。
+依存パッケージは `ca-certificates`、`iproute2`、`nftables`、`dnsmasq-base` です。
 
 routerd が Linux 上で利用する OS 機能は次の通りです。
 
@@ -30,7 +30,6 @@ routerd が Linux 上で利用する OS 機能は次の通りです。
 - WireGuard、Tailscale、strongSwan、radvd
 
 Ubuntu でも、パッケージが事前に導入されていることは前提にしません。
-初回の準備では、`install.sh` が実用的な既定セットを導入します。
 継続的な宣言管理では、`Package` リソースで依存関係を宣言してください。
 参考までに、対象パッケージは次の通りです。
 
@@ -92,8 +91,8 @@ FreeBSD も Ubuntu と同じ routerd リソースモデルを使います。
 反映先は FreeBSD のホスト機構です。
 DHCPv6-PD クライアントは `daemon(8)` で実行し、リースを安定して維持します。
 routerd は Linux 用の機構ではなく、FreeBSD の `rc.conf`、`rc.d`、`pf`、`mpd5`、`ifconfig`、dnsmasq にリソースを対応付けます。
-FreeBSD 用のリリースアーカイブを展開し、`sudo ./install.sh` を実行します。
-インストーラーは `pkg` で ports のパッケージを導入し、基本システムのコマンドは導入せず確認だけ行います。
+FreeBSD 用のリリースアーカイブのファイルを配置し、ports のパッケージを `pkg` で導入します。
+手順は [FreeBSD 入門](tutorials/freebsd-getting-started.md) にあります。
 
 実装済みの項目は次の通りです。
 

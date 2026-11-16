@@ -16,26 +16,28 @@ Use `examples/freebsd-edge.yaml` as the reference configuration.
 ## 1. Install from a release archive
 
 Download the FreeBSD archive from the
-[GitHub Releases page](https://github.com/imksoo/routerd/releases), then run
-the bundled installer on the router.
+[GitHub Releases page](https://github.com/imksoo/routerd/releases), place its
+files on the router, and install the ports packages.
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
-tar -xzf routerd-freebsd-amd64.tar.gz
-sudo ./install.sh
+mkdir routerd && tar -xzf routerd-freebsd-amd64.tar.gz -C routerd
+sudo install -m 0755 routerd/bin/* /usr/local/sbin/
+sudo install -d /usr/local/libexec/routerd /usr/local/etc/routerd
+sudo cp -R routerd/libexec/routerd/plugins /usr/local/libexec/routerd/
+sudo install -m 0555 routerd/rc.d/routerd /usr/local/etc/rc.d/routerd
+sudo install -m 0644 routerd/etc/routerd/router.yaml.sample /usr/local/etc/routerd/
+sudo pkg install ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
 ```
 
-`install.sh` installs the FreeBSD packages routerd normally needs:
-`ca_root_nss`, `curl`, `dnsmasq`, `wireguard-tools`, `mpd5`, `bind-tools`,
-`tcpdump`, `jq`, `chrony`, and `strongswan`.
-Tailscale is optional; include it with `sudo ./install.sh --with-tailscale`.
+The `pkg install` line installs the packages routerd normally needs.
+Add `tailscale` when you use it.
 
 The FreeBSD base system already provides `ifconfig`, `route`, `sysctl`, `service`,
 `sysrc`, `pfctl`, `pflog0`, `netstat`, `sockstat`, `ping`, and `traceroute`.
-Use `./install.sh --list-deps` to inspect the package and command list.
 
 ## 2. Place the router configuration
 

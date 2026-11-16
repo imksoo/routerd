@@ -13,8 +13,8 @@ routerd 以跨 OS 为前提设计。
 
 以使用 systemd 的 Linux 为主要目标。
 发布安装程序的默认安装位置为 `/usr/local` 之下。
-展开 Linux 用的发布归档文件后，执行 `sudo ./install.sh`。
-安装程序可通过 `apt-get`、`dnf`、`pacman` 之一安装运行时软件包。
+使用 `sudo apt install ./routerd-linux-amd64.deb` 安装发布的 Debian 软件包。
+依赖软件包为 `ca-certificates`、`iproute2`、`nftables`、`dnsmasq-base`。
 
 routerd 在 Linux 上使用的 OS 功能如下。
 
@@ -28,7 +28,6 @@ routerd 在 Linux 上使用的 OS 功能如下。
 - WireGuard、Tailscale、strongSwan、radvd
 
 即使在 Ubuntu 上，也不预设软件包已预先安装。
-初次准备时，`install.sh` 会安装实用的默认软件包组合。
 持续的声明式管理请通过 `Package` 资源声明依赖关系。
 参考软件包清单如下。
 
@@ -85,8 +84,8 @@ FreeBSD 同样使用与 Ubuntu 相同的 routerd 资源模型。
 应用目标为 FreeBSD 的主机机制。
 DHCPv6-PD client 通过 `daemon(8)` 执行，稳定维持租约。
 routerd 不使用 Linux 用的机制，而是将资源对应至 FreeBSD 的 `rc.conf`、`rc.d`、`pf`、`mpd5`、`ifconfig`、dnsmasq。
-展开 FreeBSD 用的发布归档文件后，执行 `sudo ./install.sh`。
-安装程序通过 `pkg` 安装 ports 软件包，并只对 base system 的命令进行确认，不另行安装。
+放置 FreeBSD 用发布归档文件中的文件，并通过 `pkg` 安装 ports 软件包。
+步骤见 [FreeBSD 入门](tutorials/freebsd-getting-started.md)。
 
 已实现的项目如下。
 

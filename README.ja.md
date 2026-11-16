@@ -83,33 +83,24 @@ DHCPv6またはIPv6の経路広告に使う宣言がある場合は、準備待�
 ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb.sha256
+sha256sum -c routerd-linux-amd64.deb.sha256
+sudo apt install ./routerd-linux-amd64.deb
 ```
 
-FreeBSD では stable release tag の `routerd-freebsd-amd64.tar.gz` を取得し、
-同じ `./install.sh` を実行します。
-arm64 ホストでは `routerd-linux-arm64.tar.gz` または
-`routerd-freebsd-arm64.tar.gz` を使います。
-同じ release page には `routerd-v20260914.0729-linux-amd64.tar.gz` のような
-版番号付きアーカイブもあります。
+arm64 ホストでは `routerd-linux-arm64.deb` を使います。
+同じ release page には `routerd_20260914.0729_amd64.deb` のような
+版番号付きのパッケージもあります。
+FreeBSD は [FreeBSD 入門](docs/ja/tutorials/freebsd-getting-started.md) を参照してください。
 
-Linux 用の release archive には、静的リンクした routerd バイナリを含めます
-(`CGO_ENABLED=0`)。
+Linux 用のバイナリは静的リンクです (`CGO_ENABLED=0`)。
 配置先ホストの glibc 版には依存しません。
 
-`install.sh` は必要な OS パッケージを導入し、実行ファイルを
+パッケージは依存する OS パッケージを apt で導入し、実行ファイルを
 `/usr/local/sbin` に配置します。
-また、サービスのテンプレートと `router.yaml.sample` を配置します。
+また、`routerd.service` と `router.yaml.sample` を配置します。
 既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
-パッケージ一覧は次のコマンドで確認できます。
-
-```sh
-./install.sh --list-deps
-```
 
 ### 設定を作り、変更前に確認する
 
@@ -365,7 +356,7 @@ make website-build
 ```
 
 Makefile は開発用です。
-利用者向けの配置はリリースアーカイブと `install.sh` で行います。
+利用者向けの配置は Debian パッケージ (`make deb`) と、FreeBSD 用のリリースアーカイブで行います。
 
 主な生成物:
 

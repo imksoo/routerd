@@ -18,24 +18,26 @@ dnsmasq 設定、`mpd5.conf`、そして DS-Lite 用の動的な `ifconfig gif` 
 ## 1. リリースアーカイブから導入する
 
 [GitHub Releases](https://github.com/imksoo/routerd/releases) から FreeBSD 用の
-アーカイブを取得し、ルーター上で同梱のインストーラーを実行します。
+アーカイブを取得し、ルーター上にファイルを配置して、ports のパッケージを導入します。
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
-tar -xzf routerd-freebsd-amd64.tar.gz
-sudo ./install.sh
+mkdir routerd && tar -xzf routerd-freebsd-amd64.tar.gz -C routerd
+sudo install -m 0755 routerd/bin/* /usr/local/sbin/
+sudo install -d /usr/local/libexec/routerd /usr/local/etc/routerd
+sudo cp -R routerd/libexec/routerd/plugins /usr/local/libexec/routerd/
+sudo install -m 0555 routerd/rc.d/routerd /usr/local/etc/rc.d/routerd
+sudo install -m 0644 routerd/etc/routerd/router.yaml.sample /usr/local/etc/routerd/
+sudo pkg install ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
 ```
 
-`install.sh` は、通常必要になる FreeBSD パッケージを導入します。
-対象は `ca_root_nss`、`curl`、`dnsmasq`、`wireguard-tools`、`mpd5`、
-`bind-tools`、`tcpdump`、`jq`、`chrony`、`strongswan` です。
-Tailscale もあわせて入れる場合は `sudo ./install.sh --with-tailscale` を使います。
+`pkg install` の行で、通常必要になるパッケージを導入します。
+Tailscale を使う場合は `tailscale` も加えます。
 FreeBSD の基本システムには、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、
 `pfctl`、`pflog0`、`netstat`、`sockstat`、`ping`、`traceroute` があります。
-依存パッケージの一覧は `./install.sh --list-deps` で確認できます。
 
 ## 2. ルーター設定を配置する
 

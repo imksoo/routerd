@@ -85,8 +85,7 @@ mkdir -p "${workdir}" "${outdir}"
 
 iso_root="${workdir}/iso-root"
 rootfs="${workdir}/rootfs"
-payload_root="${iso_root}/routerd"
-mkdir -p "${iso_root}/casper" "${iso_root}/boot/grub" "${payload_root}"
+mkdir -p "${iso_root}/casper" "${iso_root}/boot/grub"
 
 rootfs_cache=${ROOTFS_CACHE_TAR:-}
 
@@ -151,67 +150,12 @@ if [ "${rootfs_only}" = true ]; then
     exit 0
 fi
 
-make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
+make deb ROUTERD_OS=linux GOARCH=amd64 VERSION="${version}" GIT_COMMIT="${git_commit}" DISTBASE="${distbase}"
+install -m 0644 "${distbase}/linux-amd64/routerd_${version#v}_amd64.deb" "${rootfs}/tmp/routerd.deb"
+chroot_run dpkg -i /tmp/routerd.deb
+run_root rm -f "${rootfs}/tmp/routerd.deb"
 
-install -d "${payload_root}/bin" "${payload_root}/etc/routerd" "${payload_root}/share/licenses/routerd"
-for binary in bin/linux-amd64/*; do
-    [ -f "${binary}" ] || continue
-    install -m 0755 "${binary}" "${payload_root}/bin/$(basename "${binary}")"
-done
-install -m 0755 packaging/install.sh "${payload_root}/install.sh"
-install -m 0755 packaging/uninstall.sh "${payload_root}/uninstall.sh"
-install -m 0644 examples/router-lab.yaml "${payload_root}/etc/routerd/router.yaml.sample"
-install -m 0644 LICENSE "${payload_root}/share/licenses/routerd/LICENSE"
-if [ -f THIRD_PARTY_LICENSES.md ]; then
-    install -m 0644 THIRD_PARTY_LICENSES.md "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt"
-fi
-
-install -d "${rootfs}/opt/routerd-live" "${rootfs}/usr/local/sbin" "${rootfs}/usr/local/etc/routerd" "${rootfs}/usr/local/share/doc/routerd"
-cp -a "${payload_root}/." "${rootfs}/opt/routerd-live/"
-cp -a "${payload_root}/bin/." "${rootfs}/usr/local/sbin/"
-install -m 0644 "${payload_root}/etc/routerd/router.yaml.sample" "${rootfs}/usr/local/etc/routerd/router.yaml.sample"
-install -m 0644 "${payload_root}/share/licenses/routerd/LICENSE" "${rootfs}/usr/local/share/doc/routerd/LICENSE"
-if [ -f "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" ]; then
-    install -m 0644 "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" "${rootfs}/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt"
-fi
-
-install -d "${rootfs}/etc/systemd/system"
-if [ -f contrib/systemd/routerd.service ]; then
-    install -m 0644 contrib/systemd/routerd.service "${rootfs}/etc/systemd/system/routerd.service"
-else
-    cat > "${rootfs}/etc/systemd/system/routerd.service" <<'EOF'
-[Unit]
-Description=routerd network router daemon
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 10s
-Restart=always
-RestartSec=5
-RuntimeDirectory=routerd
-StateDirectory=routerd
-
-[Install]
-WantedBy=multi-user.target
-EOF
-fi
-
-cat > "${payload_root}/README.txt" <<EOF
-routerd live payload ${version}
-
-This debootstrap-based Ubuntu live image carries routerd binaries and installer
-assets under /cdrom/routerd after boot.
-
-Suggested first steps:
-  sudo /cdrom/routerd/install.sh --prefix /usr/local --no-start-service
-  sudo /cdrom/routerd/install.sh configure
-
-For a persistent router, install Ubuntu Server to disk and then run the
-routerd installer from the release payload.
-EOF
-
+install -d "${rootfs}/opt/routerd-live"
 cat > "${rootfs}/opt/routerd-live/firstboot.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -457,17 +401,6 @@ cloudinit_value()
     clean_yaml_scalar "${value}"
 }
 
-cloudinit_first_value()
-{
-    file=$1
-    shift
-    for key in "$@"; do
-        value=$(cloudinit_value "${file}" "${key}" 2>/dev/null || true)
-        [ -n "${value}" ] && { printf '%s\n' "${value}"; return 0; }
-    done
-    return 1
-}
-
 cloudinit_ssh_authorized_keys()
 {
     file=$1
@@ -618,18 +551,6 @@ mount_config_disk()
     mount -o ro,noatime "${dev}" "${config_mount_dir}" 2>/dev/null || mount -o ro "${dev}" "${config_mount_dir}"
 }
 
-config_disk_router_yaml()
-{
-    for path in \
-        "${config_mount_dir}/router.yaml" \
-        "${config_mount_dir}/router.yml" \
-        "${config_mount_dir}/routerd/router.yaml" \
-        "${config_mount_dir}/routerd/router.yml"; do
-        [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
-    done
-    return 1
-}
-
 restore_config_disk_secrets()
 {
     src_dir="${config_mount_dir}/secrets"
@@ -657,9 +578,8 @@ restore_config_disk_config()
     for candidate in $(config_disk_candidates 2>/dev/null || true); do
         [ -b "${candidate}" ] || continue
         mount_config_disk "${candidate}" || continue
-        src=$(config_disk_router_yaml 2>/dev/null || true)
-        if [ -n "${src}" ]; then
-            install -m 0600 "${src}" "${config_file}"
+        if [ -f "${config_mount_dir}/router.yaml" ]; then
+            install -m 0600 "${config_mount_dir}/router.yaml" "${config_file}"
             restore_config_disk_secrets
             log "restored ${config_file} from ROUTERD_CONFIG media ${candidate}"
             umount "${config_mount_dir}" 2>/dev/null || true
@@ -743,27 +663,25 @@ restore_validated_config_cache()
     log "restored config from validated cache (fetch failed)"
 }
 
-restore_cloudinit_config()
+# fetch_config_url reads config_url and config_sha256 from user-data and
+# installs the fetched configuration, falling back to the validated cache.
+fetch_config_url()
 {
-    dev=$1
-    mount_cloudinit "${dev}" || return 1
-    user_data=$(cloudinit_user_data 2>/dev/null || true)
-    [ -n "${user_data}" ] || { umount "${cloudinit_mount_dir}" 2>/dev/null || true; return 1; }
-    config_url=$(cloudinit_first_value "${user_data}" config_url config-url configUrl routerd_config_url routerd-config-url 2>/dev/null || true)
-    [ -n "${config_url}" ] || { umount "${cloudinit_mount_dir}" 2>/dev/null || true; return 1; }
-    config_sha256=$(cloudinit_first_value "${user_data}" config_sha256 config-sha256 configSha256 routerd_config_sha256 routerd-config-sha256 2>/dev/null || true)
-    umount "${cloudinit_mount_dir}" 2>/dev/null || true
+    user_data=$1
+    source=$2
+    config_url=$(cloudinit_value "${user_data}" config_url 2>/dev/null || true)
+    [ -n "${config_url}" ] || return 1
+    config_sha256=$(cloudinit_value "${user_data}" config_sha256 2>/dev/null || true)
 
-    tmp=/run/routerd/routerd-config.cloudinit
-    log "fetching routerd config from cloud-init config_url"
+    tmp=/run/routerd/routerd-config.download
+    log "fetching routerd config from ${source} config_url"
     fetch_url "${config_url}" "${tmp}" || { restore_validated_config_cache && return 0; return 1; }
     verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
     install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
     cache_validated_config || true
     rm -f "${tmp}"
     bootstrap_config_url=${config_url}
-    log "restored ${config_file} from cloud-init config_url"
-    return 0
+    log "restored ${config_file} from ${source} config_url"
 }
 
 restore_cloudinit_configs()
@@ -771,9 +689,15 @@ restore_cloudinit_configs()
     command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=10 2>/dev/null || true
     for candidate in $(cloudinit_candidates 2>/dev/null || true); do
         [ -b "${candidate}" ] || continue
-        if restore_cloudinit_config "${candidate}"; then
-            return 0
+        mount_cloudinit "${candidate}" || continue
+        user_data=$(cloudinit_user_data 2>/dev/null || true)
+        if [ -z "${user_data}" ]; then
+            umount "${cloudinit_mount_dir}" 2>/dev/null || true
+            continue
         fi
+        install -m 0600 "${user_data}" /run/routerd/cloudinit-user-data
+        umount "${cloudinit_mount_dir}" 2>/dev/null || true
+        fetch_config_url /run/routerd/cloudinit-user-data cloud-init && return 0
     done
     return 1
 }
@@ -781,21 +705,7 @@ restore_cloudinit_configs()
 restore_provider_config()
 {
     fetch_provider_userdata "${provider_userdata_file}" || return 1
-    user_data=${provider_userdata_file}
-    config_url=$(cloudinit_first_value "${user_data}" config_url config-url configUrl routerd_config_url routerd-config-url 2>/dev/null || true)
-    [ -n "${config_url}" ] || return 1
-    config_sha256=$(cloudinit_first_value "${user_data}" config_sha256 config-sha256 configSha256 routerd_config_sha256 routerd-config-sha256 2>/dev/null || true)
-
-    tmp=/run/routerd/routerd-config.imds
-    log "fetching routerd config from IMDS config_url"
-    fetch_url "${config_url}" "${tmp}" || { restore_validated_config_cache && return 0; return 1; }
-    verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
-    install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
-    cache_validated_config || true
-    rm -f "${tmp}"
-    bootstrap_config_url=${config_url}
-    log "restored ${config_file} from IMDS config_url"
-    return 0
+    fetch_config_url "${provider_userdata_file}" IMDS
 }
 
 config_url_host()
@@ -901,7 +811,7 @@ ln -sf /usr/lib/systemd/system/systemd-resolved.service "${rootfs}/etc/systemd/s
 # can start, so its first process already has the intended environment and
 # capabilities.  Starting routerd dynamically from firstboot.sh left a second,
 # late start job that could briefly remove its control sockets.
-ln -sf ../routerd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd.service"
+ln -sf /usr/lib/systemd/system/routerd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd.service"
 
 install -d "${rootfs}/etc/systemd/system" "${rootfs}/etc/systemd/system/multi-user.target.wants"
 cat > "${rootfs}/etc/systemd/system/routerd-live-setup.service" <<'EOF'

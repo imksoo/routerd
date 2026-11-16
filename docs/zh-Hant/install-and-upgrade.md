@@ -1,14 +1,15 @@
 # 安裝與更新
 
-下載官方Linux amd64封存檔並驗證檢查碼。其他OS或架構請在Releases選擇對應檔案。安裝程式保留既有設定。
+下載Debian套件並驗證檢查碼。arm64請將 `linux-amd64` 改為 `linux-arm64`。相依的OS套件由apt安裝，並保留既有設定。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.deb.sha256
+sha256sum -c routerd-linux-amd64.deb.sha256
+sudo apt install ./routerd-linux-amd64.deb
 ```
+
+更新時以相同步驟安裝新的套件。替換檔案前，舊版套件會停止routerd及其輔助服務。新版套件在存在 `/usr/local/etc/routerd/router.yaml` 時啟動routerd，再由routerd啟動所需的輔助服務。需要固定版本時，請使用 `routerd_YYYYMMDD.HHMM_amd64.deb` 等帶版本號的檔案。移除時執行 `sudo apt remove routerd`。FreeBSD請參閱[FreeBSD入門](tutorials/freebsd-getting-started.md)。
 
 [Releases](https://github.com/imksoo/routerd/releases/latest)
 

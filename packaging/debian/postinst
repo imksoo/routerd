@@ -1,28 +1,14 @@
 #!/bin/sh
 set -e
+# The previous version's prerm stopped every routerd unit. Start routerd from
+# the new files; it starts its helper units the same way as on a fresh boot.
 if [ "$1" = configure ]; then
-    if ! getent group routerd >/dev/null; then
-        addgroup --system routerd
-    fi
+    getent group routerd >/dev/null || groupadd --system routerd
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload
         if [ -f /usr/local/etc/routerd/router.yaml ]; then
             systemctl enable routerd.service
-            if systemctl is-active --quiet routerd.service; then
-                systemctl restart routerd.service
-            else
-                systemctl start routerd.service
-            fi
-            units=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' | awk '{print $1}')
-            for unit in $units; do
-                [ "$unit" = routerd.service ] && continue
-                pid=$(systemctl show -p MainPID --value "$unit")
-                case "$pid" in ''|0|*[!0-9]*) continue ;; esac
-                executable=$(readlink "/proc/$pid/exe" || true)
-                case "$executable" in
-                    '/usr/local/sbin/routerd'*' (deleted)') systemctl restart "$unit" ;;
-                esac
-            done
+            systemctl start routerd.service
         fi
     fi
 fi
