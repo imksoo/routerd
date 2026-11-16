@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+- Unify Linux installation and upgrades on Debian packages, preserving existing configuration and managing service shutdown and startup through package installation.
+
 ## v20261115.1721
 
 - Remove the browser configuration wizard and publish plain Markdown documentation with YAML definitions for every resource kind.

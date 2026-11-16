@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+- 将Linux安装与更新统一为Debian软件包，保留现有配置，并在软件包安装时管理服务的停止与启动。
+
 ## v20261115.1721
 
 - 移除浏览器配置向导，改为发布包含所有资源类型YAML定义的Markdown文档。
