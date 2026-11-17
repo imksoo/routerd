@@ -2,11 +2,13 @@
 set -e
 if [ "$1" = remove ]; then
     # Remove only generated units and links resolving to those exact files.
-    # This also works offline; drop-ins and persistent data are left untouched.
+    # This also works offline; never descend into operational drop-in directories.
+    # Persistent data and files without the generation marker are left untouched.
     for unit in /etc/systemd/system/*.service; do
         if [ ! -f "$unit" ] || [ -L "$unit" ]; then continue; fi
         grep -qx '# routerd-managed-service: v1' "$unit" || continue
-        find /etc/systemd/system /run/systemd/system -type l -print 2>/dev/null |
+        find /etc/systemd/system /run/systemd/system \
+            -type d -name '*.d' -prune -o -type l -print 2>/dev/null |
             while IFS= read -r link; do
                 if [ "$(readlink -m "$link")" = "$unit" ]; then
                     rm -f "$link"
@@ -15,7 +17,8 @@ if [ "$1" = remove ]; then
         rm -f "$unit"
     done
     # Packaged units may already be gone when postrm runs.
-    find /etc/systemd/system /run/systemd/system -type l -print 2>/dev/null |
+    find /etc/systemd/system /run/systemd/system \
+        -type d -name '*.d' -prune -o -type l -print 2>/dev/null |
         while IFS= read -r link; do
             case "$(readlink -m "$link")" in
                 /etc/systemd/system/routerd.service|/etc/systemd/system/routerd.slice|\

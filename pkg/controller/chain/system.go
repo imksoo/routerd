@@ -468,7 +468,6 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if features.HasSystemd {
-		explicitUnits := map[string]bool{}
 		if routerHasBGP(c.Router) {
 			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", c.bgpSystemdSpec(defaults)); err != nil {
 				return err
@@ -501,24 +500,20 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			unit := render.TailscaleSystemdSpec(resource.Metadata.Name, spec)
 			unitName := firstNonEmpty(unit.UnitName, render.TailscaleUnitName(resource.Metadata.Name))
 			path := filepath.Join(c.systemdSystemDir, unitName)
-			changed := false
-			if !explicitUnits[unitName] {
-				var err error
-				changed, err = c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit)
-				if err != nil {
-					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
-						"phase":     "Error",
-						"reason":    "ApplyFailed",
-						"unitName":  unitName,
-						"path":      path,
-						"error":     err.Error(),
-						"dryRun":    c.DryRun,
-						"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-					}); saveErr != nil {
-						return saveErr
-					}
-					return err
+			changed, err := c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit)
+			if err != nil {
+				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
+					"phase":     "Error",
+					"reason":    "ApplyFailed",
+					"unitName":  unitName,
+					"path":      path,
+					"error":     err.Error(),
+					"dryRun":    c.DryRun,
+					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				}); saveErr != nil {
+					return saveErr
 				}
+				return err
 			}
 			phase := "Applied"
 			if c.DryRun && changed {
@@ -533,7 +528,6 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				"path":              path,
 				"changed":           changed,
 				"dryRun":            c.DryRun,
-				"explicitUnit":      explicitUnits[unitName],
 				"advertiseExitNode": spec.AdvertiseExitNode,
 				"advertiseRoutes":   strings.Join(spec.AdvertiseRoutes, ","),
 				"acceptDNS":         boolPointerStatus(spec.AcceptDNS),
@@ -590,9 +584,6 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				return err
 			}
 			unitName := healthCheckUnitName(resource.Metadata.Name)
-			if explicitUnits[unitName] {
-				continue
-			}
 			path := filepath.Join(c.systemdSystemDir, unitName)
 			changed, activationQueued, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv)
 			if err != nil {
@@ -651,7 +642,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				}
 			}
 		}
-		if err := c.cleanupStaleHealthCheckUnits(ctx, explicitUnits); err != nil {
+		if err := c.cleanupStaleHealthCheckUnits(ctx); err != nil {
 			return err
 		}
 		if render.RouterWantsDPIClassifier(c.Router) {
@@ -1473,14 +1464,11 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	return changed, false, nil
 }
 
-func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context, explicitUnits map[string]bool) error {
+func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
 	desired := map[string]bool{}
-	for unitName := range explicitUnits {
-		desired[unitName] = true
-	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "HealthCheck" {
 			continue
