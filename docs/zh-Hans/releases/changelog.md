@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261117.0407
+
 - 将主单元所有权统一到 Debian 软件包，以服务操作替代客户端进程监督，固定生成单元的权限，让 DHCP fingerprint watcher 随 dnsmasq 运行，并将 routerd 服务归入 `routerd.slice`。移除 `render systemd-service`；主进程 Telemetry 变更需要重启。卸载保留 drop-in 与持久数据。
 
 ## v20261117.0008
