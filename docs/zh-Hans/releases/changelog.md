@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261117.0008
+
 - 修复systemd保留不存在的routerd辅助单元信息时，Debian软件包更新或重新安装失败的问题。
 
 ## v20261116.2323

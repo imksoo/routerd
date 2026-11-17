@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261117.0008
+
 - systemdに存在しないrouterd補助ユニットの情報が残っていると、Debianパッケージの更新・再インストールが失敗する不具合を修正しました。
 
 ## v20261116.2323
