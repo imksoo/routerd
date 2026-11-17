@@ -4,12 +4,12 @@
 
 `apiVersion: net.routerd.net/v1alpha1` · `metadata.name`
 
-Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientを監視実行し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。
+Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientをサービスとして起動し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。
 
 ## 指定条件と参照関係
 
 - interfaceは同じRouterの基本Interfaceを参照し、PPPoESession・トンネル等を下位インターフェースには使えません。enabled:falseでもusernameとpassword・passwordFileのどちらか一方が必須です。
-- 実動作の監視処理はauthMethod・mtu/mru・serviceName/acName・lcpEchoInterval/lcpEchoFailureをデーモンへ渡しますが、ifname・managed・persist・ipv6・usePeerDNS・lcpInterval/lcpFailureは渡しません。別経路のFreeBSD手動render出力から実動作を推測しないでください。
+- サービス生成処理はauthMethod・mtu/mru・serviceName/acName・lcpEchoInterval/lcpEchoFailureをデーモンへ渡しますが、ifname・managed・persist・ipv6・usePeerDNS・lcpInterval/lcpFailureは渡しません。別経路のFreeBSD手動render出力から実動作を推測しないでください。
 - 主デーモンの既定値は両OSともMTU・MRU 1454、LCP echo 30秒・4回です。別のFreeBSD手動mpd5生成では1492、旧LCP 20秒・3回です。設定計画やConnectedは実際の上流疎通を保証しません。
 
 ## 設定構文

@@ -48,11 +48,13 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
-	telemetry, err := routerotel.Setup(context.Background(), "routerd")
-	if err != nil {
-		return err
+	if len(args) > 0 && args[0] != "serve" {
+		telemetry, err := routerotel.Setup(context.Background(), "routerd")
+		if err != nil {
+			return err
+		}
+		defer telemetry.ShutdownGracefully()
 	}
-	defer telemetry.ShutdownGracefully()
 	if len(args) == 0 {
 		usage(stderr)
 		return errors.New("missing command")
@@ -94,7 +96,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  validate --config <path>          validate config")
 	fmt.Fprintln(w, "  check --config <path>             run preflight check")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <dir>]  render FreeBSD config files")
-	fmt.Fprintln(w, "  render systemd-service --config <path>            render routerd.service without changing the host")
 	fmt.Fprintln(w, "  version                          print the routerd version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "serve options:")

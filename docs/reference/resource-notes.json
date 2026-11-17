@@ -610,6 +610,12 @@
         "生成するテレメトリー環境の取得元は、TelemetryまたはOTLP endpointが空でないObservabilityPipelineのいずれか1つです。複数が選ばれると生成エラーになります。リソース名による相互参照ではありません。",
         "產生的遙測環境只可選一個Telemetry或OTLP endpoint非空的ObservabilityPipeline；同時選到多個會產生錯誤，不透過資源名稱互相參照。",
         "生成的遥测环境仅可选择一个Telemetry或OTLP endpoint非空的ObservabilityPipeline；同时选到多个会生成错误，不通过资源名互相引用。"
+      ],
+      [
+        "At serve startup, configuration supplies only unset OpenTelemetry environment variables; explicit values, including empty ones, take precedence. Restart routerd.service to apply main-daemon Telemetry changes; routerd never restarts itself.",
+        "serve起動時に設定から未設定のOpenTelemetry環境変数だけを補い、空文字を含む明示値を優先します。本体のTelemetry変更はrouterd.serviceの再起動で反映し、本体は自身を再起動しません。",
+        "serve 啟動時僅由設定補入未設定的 OpenTelemetry 環境變數，明確值（含空值）優先。主程序 Telemetry 變更須重新啟動 routerd.service；routerd 不會自行重新啟動。",
+        "serve 启动时仅由配置补入未设置的 OpenTelemetry 环境变量，显式值（含空值）优先。主进程 Telemetry 变更须重启 routerd.service；routerd 不会自行重启。"
       ]
     ],
     "fields": {
@@ -3659,10 +3665,10 @@
   },
   "PPPoESession": {
     "purpose": [
-      "Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.",
-      "Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientを監視実行し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。",
-      "監督執行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，並公開協商的 IPv4 工作階段狀態。部分舊欄位僅影響手動 FreeBSD render 輸出，不影響此精靈路徑。",
-      "监督运行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，并公开协商的 IPv4 会话状态。部分旧字段仅影响手动 FreeBSD render 输出，不影响此守护进程路径。"
+      "Run a service-managed routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.",
+      "Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientをサービスとして起動し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。",
+      "以服務執行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，並公開協商的 IPv4 工作階段狀態。部分舊欄位僅影響手動 FreeBSD render 輸出，不影響此精靈路徑。",
+      "以服务运行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，并公开协商的 IPv4 会话状态。部分旧字段仅影响手动 FreeBSD render 输出，不影响此守护进程路径。"
     ],
     "rules": [
       [
@@ -3672,10 +3678,10 @@
         "interface 必须引用同一 Router 的基本 Interface，不可使用 PPPoESession、隧道等作为底层接口。即使 enabled:false，仍需 username 及 password/passwordFile 其中一项。"
       ],
       [
-        "The live supervisor passes authMethod, mtu/mru, serviceName/acName and lcpEchoInterval/lcpEchoFailure to the daemon. It does not pass ifname, managed, persist, ipv6, usePeerDNS, lcpInterval or lcpFailure. Do not infer live behavior from the separate manual FreeBSD render artifact.",
-        "実動作の監視処理はauthMethod・mtu/mru・serviceName/acName・lcpEchoInterval/lcpEchoFailureをデーモンへ渡しますが、ifname・managed・persist・ipv6・usePeerDNS・lcpInterval/lcpFailureは渡しません。別経路のFreeBSD手動render出力から実動作を推測しないでください。",
-        "實際監督流程傳入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不傳入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。請勿由另一條手動 FreeBSD render 路徑推定實際行為。",
-        "实际监督流程传入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不传入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。请勿由另一条手动 FreeBSD render 路径推定实际行为。"
+        "The service controller passes authMethod, mtu/mru, serviceName/acName and lcpEchoInterval/lcpEchoFailure to the daemon. It does not pass ifname, managed, persist, ipv6, usePeerDNS, lcpInterval or lcpFailure. Do not infer live behavior from the separate manual FreeBSD render artifact.",
+        "サービス生成処理はauthMethod・mtu/mru・serviceName/acName・lcpEchoInterval/lcpEchoFailureをデーモンへ渡しますが、ifname・managed・persist・ipv6・usePeerDNS・lcpInterval/lcpFailureは渡しません。別経路のFreeBSD手動render出力から実動作を推測しないでください。",
+        "服務產生流程傳入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不傳入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。請勿由另一條手動 FreeBSD render 路徑推定實際行為。",
+        "服务生成流程传入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不传入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。请勿由另一条手动 FreeBSD render 路径推定实际行为。"
       ],
       [
         "The live daemon defaults to MTU/MRU 1454 and LCP echo 30s/4 on both platforms. The separate manual FreeBSD mpd5 rendering defaults to 1492 and legacy LCP 20s/3. Neither the configured plan nor Connected status proves real upstream reachability.",
@@ -3692,13 +3698,13 @@
         "必填的底层基本 Interface metadata.name，解析为物理 OS 名称，不是状态值来源。"
       ],
       "ifname": [
-        "Optional desired PPP name, <=15 characters without whitespace/slash; omission requires ppp-<name> to fit 15 characters. The live supervisor currently ignores this field and the daemon uses DefaultIfName; manual FreeBSD render uses this value. Avoid relying on a custom name in the live path.",
+        "Optional desired PPP name, <=15 characters without whitespace/slash; omission requires ppp-<name> to fit 15 characters. The service controller currently ignores this field and the daemon uses DefaultIfName; manual FreeBSD render uses this value. Avoid relying on a custom name in the live path.",
         "希望するPPP名で、15文字以内・空白とスラッシュ不可です。省略時はppp-<name>が15文字以内である必要があります。現行の主監視処理はこの項目を渡さずデーモンのDefaultIfNameを使い、FreeBSDの手動renderのみ値を使います。実動作で独自名に依存しないでください。",
         "選用的 PPP 名稱，最多 15 字元，不含空白或斜線；省略時 ppp-<name> 須在 15 字元內。目前主監督流程忽略此欄位，由精靈使用 DefaultIfName；手動 FreeBSD render 才使用此值。實際運作請勿依賴自訂名稱。",
         "可选的 PPP 名称，最多 15 字符，不含空白或斜线；省略时 ppp-<name> 须在 15 字符内。目前主监督流程忽略此字段，由守护进程使用 DefaultIfName；手动 FreeBSD render 才使用此值。实际运行请勿依赖自定义名称。"
       ],
       "enabled": [
-        "Default true. False suppresses startup, stops the supervised session and reports Disabled; it does not waive configuration validation.",
+        "Default true. False suppresses startup, stops the service-managed session and reports Disabled; it does not waive configuration validation.",
         "既定trueです。falseは起動を抑止し監視するセッションを停止してDisabledを表示しますが、設定検証は省略しません。",
         "預設 true；false 不啟動並停止受監督的工作階段，回報 Disabled，但不略過設定驗證。",
         "默认 true；false 不启动并停止受监督的会话，报告 Disabled，但不跳过配置验证。"
@@ -3764,7 +3770,7 @@
         "默认 false，但主守护进程路径不读取。LinuxPeer 一律输出 usepeerdns，协商 DNS 会公开于 PPP 状态；此字段不控制 routerd DNS 转发或 resolv.conf 应用。"
       ],
       "persist": [
-        "Optional boolean decoded but not used by the current supervised daemon configuration; omission does not establish a resource-specific retry policy. Supervisor lifecycle is separate.",
+        "Optional boolean decoded but not used by the current managed daemon configuration; omission does not establish a resource-specific retry policy. Service lifecycle is separate.",
         "任意の真偽値ですが、現行の監視デーモン設定では使いません。省略時にリソース独自の再試行ポリシーが決まるものではなく、監視処理のライフサイクルは別です。",
         "選用布林值，目前受監督精靈設定不使用；省略不會建立此資源的重試原則，監督生命週期另行處理。",
         "可选布尔值，目前受监督守护进程配置不使用；省略不会建立此资源的重试策略，监督生命周期另行处理。"
@@ -3794,13 +3800,13 @@
         "非负的 LCP echo 失败次数，省略或 0 使用主默认 4。Linux 传入 lcp-echo-failure，FreeBSD 守护进程生成 keep-alive 间隔及间隔×次数。"
       ],
       "ipv6": [
-        "Default false; currently not passed to the supervised PPP daemon and does not emit IPv6 negotiation options in its generated configuration. Do not rely on this flag to enable IPv6 over PPP.",
+        "Default false; currently not passed to the managed PPP daemon and does not emit IPv6 negotiation options in its generated configuration. Do not rely on this flag to enable IPv6 over PPP.",
         "既定falseです。現行の監視PPPデーモンには渡さず、その生成設定にもIPv6交渉オプションを出しません。このフラグでPPP上のIPv6を有効化できるとは扱わないでください。",
         "預設 false，目前不傳入受監督 PPP 精靈，其產生設定不輸出 IPv6 協商選項，請勿依賴此旗標啟用 PPP IPv6。",
         "默认 false，目前不传入受监督 PPP 守护进程，其生成配置不输出 IPv6 协商选项，请勿依赖此标志启用 PPP IPv6。"
       ],
       "managed": [
-        "Default false. The live supervisor starts any enabled session regardless of this flag. In manual FreeBSD render only, true adds an enabled session to the mpd5 default load list. It is not observe-only protection for the live path.",
+        "Default false. The service controller starts any enabled session regardless of this flag. In manual FreeBSD render only, true adds an enabled session to the mpd5 default load list. It is not observe-only protection for the live path.",
         "既定falseですが、主監視処理はこの値に関係なくenabledなセッションを起動します。FreeBSD手動renderだけでは、trueの有効セッションをmpd5の既定load一覧に追加します。実動作の観測専用指定ではありません。",
         "預設 false，但主監督流程不論此值都啟動 enabled 工作階段。僅手動 FreeBSD render 中，true 才將啟用的工作階段加入 mpd5 預設 load 清單。不是實際路徑的唯讀保護。",
         "默认 false，但主监督流程不论此值都启动 enabled 会话。仅手动 FreeBSD render 中，true 才将启用的会话加入 mpd5 默认 load 列表。不是实际路径的只读保护。"
@@ -6451,14 +6457,14 @@
     ],
     "rules": [
       [
-        "interface must name an existing logical interface. The default client is routerd-dhcpv6-client. networkd, dhcp6c and dhcpcd are recognized alternatives with platform-specific generation, but the live supervisor/status socket path is built around the routerd daemon; do not assume equivalent lifecycle support.",
-        "interfaceは既存論理インターフェース名が必要です。既定clientはrouterd-dhcpv6-clientです。networkd・dhcp6c・dhcpcdも認識してOS別設定を生成しますが、実行時の監督・状態ソケットはrouterdデーモン中心で、同等のライフサイクル対応とは限りません。",
+        "interface must name an existing logical interface. The default client is routerd-dhcpv6-client. networkd, dhcp6c and dhcpcd are recognized alternatives with platform-specific generation, but the service controller/status socket path is built around the routerd daemon; do not assume equivalent lifecycle support.",
+        "interfaceは既存論理インターフェース名が必要です。既定clientはrouterd-dhcpv6-clientです。networkd・dhcp6c・dhcpcdも認識してOS別設定を生成しますが、サービス管理・状態ソケットはrouterdデーモン中心で、同等のライフサイクル対応とは限りません。",
         "interface 須為既有邏輯介面名稱，預設 client 為 routerd-dhcpv6-client。亦識別 networkd、dhcp6c、dhcpcd 並產生平台設定，但即時監督與狀態通訊端以 routerd 常駐程式為主，生命週期支援不應視為等同。",
         "interface 须为现有逻辑接口名称，默认 client 为 routerd-dhcpv6-client。也识别 networkd、dhcp6c、dhcpcd 并生成平台配置，但实时监督与状态套接字以 routerd 守护进程为主，生命周期支持不应视为等同。"
       ],
       [
-        "profile and prefixLength influence generated external-client configuration and restored-snapshot matching. The supervised routerd-dhcpv6-client command does not receive a prefix-length or profile flag: its acquisition does not use these fields as a length hint. clientDUID is passed to it.",
-        "profile・prefixLengthは外部クライアント設定生成と復元スナップショットの整合確認に使います。監督起動するrouterd-dhcpv6-clientにはprofile・prefix-length引数を渡さず、その取得処理で長さ要求には使いません。clientDUIDは渡します。",
+        "profile and prefixLength influence generated external-client configuration and restored-snapshot matching. The service-managed routerd-dhcpv6-client command does not receive a prefix-length or profile flag: its acquisition does not use these fields as a length hint. clientDUID is passed to it.",
+        "profile・prefixLengthは外部クライアント設定生成と復元スナップショットの整合確認に使います。サービス起動するrouterd-dhcpv6-clientにはprofile・prefix-length引数を渡さず、その取得処理で長さ要求には使いません。clientDUIDは渡します。",
         "profile/prefixLength 影響外部客戶端設定及還原快照比對。受監督的 routerd-dhcpv6-client 不接收 profile 或 prefix-length 旗標，取得時不以此提示長度；clientDUID 會傳入。",
         "profile/prefixLength 影响外部客户端配置及还原快照比对。受监督的 routerd-dhcpv6-client 不接收 profile 或 prefix-length 标志，获取时不以此提示长度；clientDUID 会传入。"
       ],
@@ -6477,10 +6483,10 @@
         "必填同一 Router 的逻辑上行接口。若 DHCPv6Address 也使用同一接口，外部 dhcp6c/dhcpcd PD client 须与该资源 client 相符。"
       ],
       "client": [
-        "Default routerd-dhcpv6-client; accepted alternatives networkd/dhcp6c/dhcpcd. Current supervision can also synthesize a routerd DHCPv6 systemd unit, so selecting an external client is not a general guarantee that the built-in daemon is disabled.",
-        "既定routerd-dhcpv6-clientで、代替はnetworkd・dhcp6c・dhcpcdです。現行の監督処理はrouterd DHCPv6のsystemdユニットも合成するため、外部指定だけで内蔵デーモンの停止を一般には保証しません。",
-        "預設 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。目前監督亦可能合成 routerd DHCPv6 systemd 單元，選外部客戶端不普遍保證停用內建常駐程式。",
-        "默认 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。当前监督也可能合成 routerd DHCPv6 systemd 单元，选外部客户端不普遍保证禁用内置守护进程。"
+        "Default routerd-dhcpv6-client; accepted alternatives networkd/dhcp6c/dhcpcd. Only the built-in client selection generates its per-resource routerd client service. External clients retain their platform-specific configuration paths.",
+        "既定はrouterd-dhcpv6-clientで、代替はnetworkd・dhcp6c・dhcpcdです。内蔵クライアントを選択した場合だけリソース単位のrouterdクライアントサービスを生成し、外部クライアントはOS別の設定経路を使います。",
+        "預設 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。僅選擇內建用戶端時產生每個資源的 routerd 用戶端服務；外部用戶端保留平台設定路徑。",
+        "默认 routerd-dhcpv6-client，接受 networkd/dhcp6c/dhcpcd。仅选择内置客户端时生成每个资源的 routerd 客户端服务；外部客户端保留平台配置路径。"
       ],
       "profile": [
         "Empty/default, ntt-ngn-direct-hikari-denwa or ntt-hgw-lan-pd. NTT profiles supply /60 and link-layer DUID defaults to supporting generation paths; they do not configure provider credentials or change the built-in daemon command.",

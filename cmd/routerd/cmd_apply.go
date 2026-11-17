@@ -320,7 +320,6 @@ func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCle
 	routers = append(routers, router)
 	for _, candidate := range routers {
 		if targetOS == platform.OSLinux {
-			out[api.SystemAPIVersion+"/ServiceUnit/"+render.RouterdUnitName] = true
 			out[api.SystemAPIVersion+"/ServiceUnit/"+render.BGPUnitName] = true
 			if render.RouterWantsDPIClassifier(candidate) {
 				out[api.SystemAPIVersion+"/ServiceUnit/"+render.DPIClassifierUnitName] = true
@@ -663,21 +662,19 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 
 func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 	controllerOpts := controllerchain.Options{
-		SuperviseClientDaemons: false,
-		SkipLegacyClientUnits:  true,
-		DnsmasqCommand:         "dnsmasq",
-		DnsmasqConfig:          defaultString(opts.DnsmasqConfigPath, defaultDnsmasqConfigPath),
-		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
-		DnsmasqPort:            53,
-		DnsmasqListen:          []string{"127.0.0.1"},
-		NftablesPath:           defaultString(opts.NftablesPath, defaultNftablesPath),
-		FirewallPath:           "/run/routerd/firewall.nft",
-		NftCommand:             "nft",
-		ConntrackInterval:      30 * time.Second,
-		BGPSocketPath:          opts.BGPSocketPath,
-		BGPControlSocketPath:   opts.BGPControlSocketPath,
-		BGPStatePath:           opts.BGPStatePath,
-		MutationGate:           opts.MutationGate,
+		DnsmasqCommand:       "dnsmasq",
+		DnsmasqConfig:        defaultString(opts.DnsmasqConfigPath, defaultDnsmasqConfigPath),
+		DnsmasqPID:           filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
+		DnsmasqPort:          53,
+		DnsmasqListen:        []string{"127.0.0.1"},
+		NftablesPath:         defaultString(opts.NftablesPath, defaultNftablesPath),
+		FirewallPath:         "/run/routerd/firewall.nft",
+		NftCommand:           "nft",
+		ConntrackInterval:    30 * time.Second,
+		BGPSocketPath:        opts.BGPSocketPath,
+		BGPControlSocketPath: opts.BGPControlSocketPath,
+		BGPStatePath:         opts.BGPStatePath,
+		MutationGate:         opts.MutationGate,
 	}
 	if opts.DryRun {
 		applyDryRunControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)

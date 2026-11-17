@@ -19,7 +19,7 @@ for binary in "$distroot"/bin/*; do
 done
 cp -a "$distroot/libexec/routerd/plugins" "$stage/usr/local/libexec/routerd/"
 install -m 0644 "$distroot/etc/routerd/router.yaml.sample" "$stage/usr/local/etc/routerd/"
-install -m 0644 "$distroot/systemd/routerd.service" "$stage/usr/lib/systemd/system/"
+install -m 0644 "$distroot/systemd/routerd.service" "$distroot/systemd/routerd.slice" "$stage/usr/lib/systemd/system/"
 install -m 0644 "$distroot/share/doc/README.md" "$distroot/share/doc/LICENSE" "$stage/usr/share/doc/routerd/"
 if [ -f "$distroot/share/doc/THIRD_PARTY_LICENSES.md" ]; then
     install -m 0644 "$distroot/share/doc/THIRD_PARTY_LICENSES.md" "$stage/usr/share/doc/routerd/"

@@ -84,7 +84,7 @@ type DynamicConfigPartSpec struct {
 	MobilityDataplane MobilityDataplanePlan `yaml:"mobilityDataplane,omitempty" json:"mobilityDataplane,omitempty"`
 	// ARPObserverIntents are typed local observation bootstrap operations
 	// produced from the normalized on-prem MobilityPool input. They keep the
-	// daemon supervisor from reopening MobilityPool configuration just to start
+	// service controller from reopening MobilityPool configuration just to start
 	// an ownership observation source.
 	ARPObserverIntents []ARPObserverIntent `yaml:"arpObserverIntents,omitempty" json:"arpObserverIntents,omitempty"`
 	// FIBVerdicts are typed ownership results for the route effector. They keep
@@ -243,7 +243,7 @@ type LocalCaptureIntent struct {
 // reopens MobilityPool, EventGroup, or SAMNodeSet configuration.
 type ARPObserverIntent struct {
 	// ResourceName is a controller-generated, globally unique daemon identity.
-	// It keys the supervised process, socket, and state path, so it must never
+	// It keys the observer service, socket, and state path, so it must never
 	// be copied directly from an ownershipDiscovery source.resource value.
 	ResourceName      string   `yaml:"resourceName" json:"resourceName"`
 	PoolRef           string   `yaml:"poolRef" json:"poolRef"`

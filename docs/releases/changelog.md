@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+- Unify main-unit ownership in the Debian package; replace client process supervision with service-manager operations, fix generated capabilities, start the DHCP fingerprint watcher with dnsmasq, and group routerd services in `routerd.slice`. Remove `render systemd-service`; main-daemon Telemetry updates require a restart. Preserve drop-ins and persistent data on removal.
+
 ## v20261117.0008
 
 - Fix Debian package upgrades and reinstalls failing when systemd retains a non-existent routerd helper unit.

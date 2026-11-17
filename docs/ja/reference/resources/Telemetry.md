@@ -9,6 +9,7 @@
 ## 指定条件と参照関係
 
 - 生成するテレメトリー環境の取得元は、TelemetryまたはOTLP endpointが空でないObservabilityPipelineのいずれか1つです。複数が選ばれると生成エラーになります。リソース名による相互参照ではありません。
+- serve起動時に設定から未設定のOpenTelemetry環境変数だけを補い、空文字を含む明示値を優先します。本体のTelemetry変更はrouterd.serviceの再起動で反映し、本体は自身を再起動しません。
 
 ## 設定構文
 

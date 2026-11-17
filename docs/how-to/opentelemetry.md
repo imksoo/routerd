@@ -145,6 +145,8 @@ remove that override and run `systemctl daemon-reload`.
 
 Use `Telemetry` to describe the OTLP endpoint in router YAML. routerd injects the matching OpenTelemetry environment variables into generated systemd, NixOS, and FreeBSD rc.d units. The collector is still external; routerd only prepares the exporter configuration.
 
+At `serve` startup, routerd reads its configuration and fills only environment variables absent according to `os.LookupEnv` before OpenTelemetry setup; an explicitly set empty value is preserved. Changing `Telemetry` for the main daemon requires an operator restart of `routerd.service`. routerd does not restart itself. Generated helper services still receive the rendered telemetry environment.
+
 ```yaml
 apiVersion: observability.routerd.net/v1alpha1
 kind: Telemetry

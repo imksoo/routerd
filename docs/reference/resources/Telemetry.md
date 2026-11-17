@@ -9,6 +9,7 @@ Configures OpenTelemetry environment variables for rendered managed services. It
 ## Conditions and references
 
 - Only one selected Telemetry or ObservabilityPipeline with a nonempty OTLP endpoint may supply the generated telemetry environment; multiple selected resources fail rendering. No resource-name reference is involved.
+- At serve startup, configuration supplies only unset OpenTelemetry environment variables; explicit values, including empty ones, take precedence. Restart routerd.service to apply main-daemon Telemetry changes; routerd never restarts itself.
 
 ## Configuration syntax
 

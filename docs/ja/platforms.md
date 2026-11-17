@@ -39,10 +39,13 @@ Ubuntu でも、パッケージが事前に導入されていることは前提�
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS 制御 | `procps`, `systemd`, `kmod` |
 
-Linux では、長時間稼働する `routerd serve` が `routerd-dhcpv6-client`、
-`routerd-dhcpv4-client`、`routerd-pppoe-client` を直接監視して起動します。
-旧来のリソース単位の systemd ユニットを併用しないでください。
-`routerd-healthcheck` は引き続き管理対象の systemd サービスとして動作します。
+`routerd.service` の所有者は Debian パッケージだけです。`contrib/systemd/routerd.service` をそのまま収録し、本体は capability の上限指定なしで root として動作します。本体が自身の unit を書き換えたり再起動したりする処理はありません。`routerd render systemd-service` は廃止しました。Live ISO の起動順は `routerd.service.d/10-live-setup.conf` に残します。
+
+DHCPv4、DHCPv6-PD、PPPoE、RA と mobility の ARP observer は、BGP・DNS 補助デーモンと同様に、リソース単位のサービスで管理します。routerd は `When` と HA の役割条件を確認してサービス操作で起動・停止し、クライアントを単独ではブート時に自動起動しません。外部 DHCPv6-PD クライアントを指定した場合、内蔵クライアントは起動しません。クライアント unit は `routerd.service` への `BindsTo`・`PartOf`・`Requires` 依存を持たず、本体を再起動しても停止しません。FreeBSD は Runner 内のプロセス監視ではなく、既存の rc.d 生成処理と OS のサービス操作を使います。クライアントリソースの `When` が true なら起動・更新し、未確定なら既存ユニットを起動・停止・書換せず保持します。false または設定から削除された場合はユニットを削除します。PPPoE 無効、外部 DHCPv6-PD 選択、HA 待機系では引き続き内蔵クライアントを停止します。
+
+パッケージは `routerd.slice` を収録し、固定の本体ユニットと生成する全 routerd サービスを所属させます。更新時の保守スクリプトは `routerd.service` と `routerd.slice` だけを停止します。削除時は `prerm` で本体も無効化し、`grep -l` で `/etc/systemd/system/*.service` から `# routerd-managed-service: v1` 付きのファイルを選び、各ユニットを `systemctl disable --now` してから生成ファイルを削除します。有効化リンクの管理は systemctl に任せ、`postrm` は systemd の再読込だけを行います。サービス操作と削除時の後処理は systemd が稼働する環境だけで実行します。運用・ISO の drop-in、設定、DB、鍵は保持します。更新時の `/etc/systemd/system/routerd.service` 削除も同じ生成マーカーがある場合だけとし、運用者作成ユニットと drop-in ディレクトリは保持します。
+
+dnsmasq が DHCP を管理するときは `routerd-dhcp-fingerprint-watcher.service` を起動します。watcher は `--journal-unit routerd-dnsmasq.service` でログを読み、WebConsole と同じ `--db /var/lib/routerd/dhcp-fingerprints.db` に記録します。停止・再起動は dnsmasq に連動します。lease ファイルや ARP を入力する flag はなく、収集には DHCP の `logDHCP: true` が必要です。
 
 Ubuntu 26.04 LTS（`resolute`）は、managed dnsmasq、nftables、DHCPv6-PD、
 委任された LAN IPv6 アドレス、control API について、Ubuntu 24.04 と同じ Linux

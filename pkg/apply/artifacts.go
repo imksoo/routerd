@@ -46,9 +46,8 @@ var serviceDeclarations = []serviceDeclaration{
 			if err != nil {
 				return nil
 			}
-			name := render.SafePPPoEName(ctx.res.Metadata.Name)
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{
-				SystemdName: "routerd-pppoe-" + name + ".service",
+				SystemdName: "routerd-pppoe-client@" + ctx.res.Metadata.Name + ".service",
 			}, resource.ActionEnsure, map[string]string{"disabled": fmt.Sprintf("%t", !api.BoolDefault(spec.Enabled, true))})}
 		},
 	},
@@ -275,7 +274,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("gobgp.bfd.intent", res.Metadata.Name, resource.ActionEnsure, "routerd-serve", map[string]string{"peer": spec.Peer})}
 	case "DHCPv4Client":
-		return []resource.Intent{artifact("routerd.dhcpv4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
+		return []resource.Intent{serviceIntent(serviceContext, servicemgr.Service{SystemdName: "routerd-dhcpv4-client@" + res.Metadata.Name + ".service"}, resource.ActionEnsure, nil)}
 	case "WireGuardInterface":
 		return []resource.Intent{artifact("net.wireguard.interface", res.Metadata.Name, resource.ActionEnsure, "wg", nil)}
 	case "WireGuardPeer":
@@ -337,7 +336,14 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "DHCPv6PrefixDelegation":
-		return []resource.Intent{artifact("routerd.dhcpv6.prefixDelegation", res.Metadata.Name, resource.ActionEnsure, "routerd-serve", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
+		spec, err := res.DHCPv6PrefixDelegationSpec()
+		if err != nil {
+			return nil
+		}
+		if api.EffectiveIPv6PDClient(spec.Client) != api.IPv6PDClientRouterd {
+			return []resource.Intent{artifact("routerd.dhcpv6.prefixDelegation", res.Metadata.Name, resource.ActionEnsure, "platform-network", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
+		}
+		return []resource.Intent{serviceIntent(serviceContext, servicemgr.Service{SystemdName: "routerd-dhcpv6-client@" + res.Metadata.Name + ".service"}, resource.ActionEnsure, map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()
 		if err != nil {

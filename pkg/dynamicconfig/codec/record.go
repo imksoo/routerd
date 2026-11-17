@@ -280,7 +280,7 @@ func DecodeMobilityDataplanePlan(raw string) (dynamicconfig.MobilityDataplanePla
 
 // DecodeARPObserverIntents decodes the daemon-bootstrap channel strictly. The
 // consumer must reject unknown fields and null arrays before a record can be
-// converted into a supervised observer, because on-demand ARP can emit frames.
+// converted into a service-managed observer, because on-demand ARP can emit frames.
 func DecodeARPObserverIntents(raw string) ([]dynamicconfig.ARPObserverIntent, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

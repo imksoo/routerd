@@ -26,7 +26,7 @@ func ARPObserverDynamicSource(poolName, selfNode string) string {
 // arpObserverIntents projects the already-normalized local discovery overlay
 // into the small daemon-bootstrap contract consumed by chain. It resolves
 // status-backed source addresses and interface aliases once here, so the
-// daemon supervisor never needs to reopen MobilityPool configuration.
+// service controller never needs to reopen MobilityPool configuration.
 func (c DiscoveryController) arpObserverIntents(pool NormalizedMobilityPool) []dynamicconfig.ARPObserverIntent {
 	self := pool.Self
 	if strings.TrimSpace(self.Role) != "onprem" || strings.TrimSpace(self.Capture.Type) != "proxy-arp" || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {

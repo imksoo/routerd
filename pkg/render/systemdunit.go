@@ -46,14 +46,7 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	noNewPrivileges := api.BoolDefault(spec.NoNewPrivileges, true)
 
 	var b strings.Builder
-	// The installer uses this marker to recognize the daemon unit as its own
-	// artifact. Keep it in the runtime renderer as well: otherwise a fresh
-	// package install and the first system controller reconcile alternate
-	// between two byte-different routerd.service files and force a needless
-	// self-restart during bootstrap.
-	if unitName == RouterdUnitName {
-		b.WriteString("# routerd-managed-service: v1\n")
-	}
+	b.WriteString("# routerd-managed-service: v1\n")
 	b.WriteString("# Managed by routerd. Do not edit by hand.\n")
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=" + systemdValue(description) + "\n")
@@ -63,10 +56,12 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if len(wants) > 0 {
 		b.WriteString("Wants=" + strings.Join(wants, " ") + "\n")
 	}
+	writeSpaceList(&b, "BindsTo", spec.BindsTo)
 	if len(spec.Conflicts) > 0 {
 		b.WriteString("Conflicts=" + strings.Join(spec.Conflicts, " ") + "\n")
 	}
 	b.WriteString("\n[Service]\n")
+	b.WriteString("Slice=routerd.slice\n")
 	b.WriteString("Type=" + serviceType + "\n")
 	if len(spec.Environment) > 0 {
 		for _, env := range spec.Environment {

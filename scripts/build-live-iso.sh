@@ -757,20 +757,6 @@ disable_bootstrap_dhcp()
     fi
 }
 
-prepare_routerd_service()
-{
-    tmp=$(mktemp /etc/systemd/system/.routerd.service.XXXXXX)
-    if ! /usr/local/sbin/routerd render systemd-service --config "${config_file}" > "${tmp}"; then
-        rm -f "${tmp}"
-        log "failed to render routerd.service from restored configuration"
-        return 1
-    fi
-    chmod 0644 "${tmp}"
-    mv -f "${tmp}" /etc/systemd/system/routerd.service
-    systemctl daemon-reload
-    log "prepared routerd.service from restored configuration"
-}
-
 install -d /run/routerd /var/lib/routerd "${config_dir}"
 apply_cloudinit_hostname || true
 enable_qemu_guest_agent
@@ -784,7 +770,6 @@ if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_prov
 fi
 
 disable_bootstrap_dhcp
-prepare_routerd_service
 
 EOF
 chmod 0755 "${rootfs}/opt/routerd-live/firstboot.sh"
@@ -806,11 +791,7 @@ ln -sf /run/systemd/resolve/resolv.conf "${rootfs}/etc/resolv.conf"
 install -d "${rootfs}/etc/systemd/system/multi-user.target.wants"
 ln -sf /usr/lib/systemd/system/systemd-networkd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
 ln -sf /usr/lib/systemd/system/systemd-resolved.service "${rootfs}/etc/systemd/system/multi-user.target.wants/systemd-resolved.service"
-# Start setup and routerd in the same boot transaction.  The setup service
-# renders the final, configuration-dependent routerd.service before the daemon
-# can start, so its first process already has the intended environment and
-# capabilities.  Starting routerd dynamically from firstboot.sh left a second,
-# late start job that could briefly remove its control sockets.
+# Start setup and routerd in the same boot transaction.
 ln -sf /usr/lib/systemd/system/routerd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd.service"
 
 install -d "${rootfs}/etc/systemd/system" "${rootfs}/etc/systemd/system/multi-user.target.wants"
@@ -822,6 +803,7 @@ Before=routerd.service
 AssertPathExists=/opt/routerd-live/firstboot.sh
 
 [Service]
+Slice=routerd.slice
 Type=oneshot
 ExecStart=/opt/routerd-live/firstboot.sh
 RemainAfterExit=yes
@@ -831,9 +813,7 @@ WantedBy=multi-user.target
 EOF
 ln -sf ../routerd-live-setup.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd-live-setup.service"
 
-# Keep the live setup dependency outside the controller-owned base unit.  The
-# controller may rewrite routerd.service from the restored configuration, but
-# it must never erase the boot ordering or let routerd run after a failed setup.
+# Keep live boot ordering in a drop-in outside the packaged base unit.
 install -d "${rootfs}/etc/systemd/system/routerd.service.d"
 cat > "${rootfs}/etc/systemd/system/routerd.service.d/10-live-setup.conf" <<'EOF'
 [Unit]

@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -620,8 +619,9 @@ func serviceUnitStatusSubscriptions(router *api.Router) []bus.Subscription {
 		"IPv6RouterAdvertisement": true,
 		"DNSResolver":             true,
 		"EventGroup":              true,
+		"PPPoESession":            true,
 	}
-	deps := whenStatusDependencyRefs(router, "ServiceUnit", "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck")
+	deps := whenStatusDependencyRefs(router, "ServiceUnit", "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck", "PPPoESession")
 	return []bus.Subscription{{
 		Topics: []string{"routerd.resource.status.changed", "routerd.controller.bootstrap"},
 		Filter: func(event daemonapi.DaemonEvent) bool {
@@ -849,30 +849,26 @@ type Options struct {
 	DryRunServiceUnit       bool
 	DryRunLogRetention      bool
 	DryRunNTP               bool
-	SuperviseClientDaemons  bool
-	// SkipLegacyClientUnits keeps a one-shot reconciliation from creating
-	// per-resource service units when client lifecycle belongs to routerd serve.
-	SkipLegacyClientUnits bool
-	FirewallDisabled      bool
-	DnsmasqCommand        string
-	DnsmasqConfig         string
-	DnsmasqPID            string
-	DnsmasqPort           int
-	DnsmasqListen         []string
-	NftablesPath          string
-	FirewallPath          string
-	PathMTUPath           string
-	ForceFragmentPath     string
-	NftCommand            string
-	BGPSocketPath         string
-	BGPControlSocketPath  string
-	BGPStatePath          string
-	ConntrackInterval     time.Duration
-	Logger                *slog.Logger
-	ControllerObserver    framework.Observer
-	EnabledControllers    []string
-	PeerGroupSyncClient   *mobilitycontroller.PeerGroupSyncClient
-	MutationGate          *sync.RWMutex
+	FirewallDisabled        bool
+	DnsmasqCommand          string
+	DnsmasqConfig           string
+	DnsmasqPID              string
+	DnsmasqPort             int
+	DnsmasqListen           []string
+	NftablesPath            string
+	FirewallPath            string
+	PathMTUPath             string
+	ForceFragmentPath       string
+	NftCommand              string
+	BGPSocketPath           string
+	BGPControlSocketPath    string
+	BGPStatePath            string
+	ConntrackInterval       time.Duration
+	Logger                  *slog.Logger
+	ControllerObserver      framework.Observer
+	EnabledControllers      []string
+	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
+	MutationGate            *sync.RWMutex
 }
 
 func ntpControllersForOptions(router *api.Router, eventBus *bus.Bus, store Store, opts Options) (NTPClientController, NTPServerController) {
@@ -889,9 +885,7 @@ type Runner struct {
 	CancelServe         context.CancelFunc
 	ARPObserverCommands arpObserverCommandPusher
 
-	supervisedMu           sync.Mutex
-	clientDaemonContext    context.Context // serve lifetime, not a controller generation
-	clientDaemonStates     map[string]supervisedDaemonState
+	arpObserverMu          sync.Mutex
 	daemonSourcesStarted   map[string]*arpDaemonSource
 	arpObserverReadySet    map[string]bool
 	arpObserverSyncs       map[string]*arpObserverSync
@@ -926,25 +920,6 @@ type arpObserverSync struct {
 type arpDaemonSource struct {
 	socket string
 	cancel context.CancelFunc
-}
-
-type supervisedDaemonSpec struct {
-	ResourceName string
-	Binary       string
-	Args         []string
-}
-
-type supervisedDaemonState struct {
-	Spec   supervisedDaemonSpec
-	Cancel context.CancelFunc
-	// Done acknowledges supervisor exit, including ownership-marker writes.
-	// Cancel remains asynchronous and does not wait for this acknowledgement.
-	Done <-chan struct{}
-}
-
-type supervisedDaemonProcess struct {
-	PID  int
-	Args []string
 }
 
 type arpObserverCommandPusher interface {
@@ -1145,7 +1120,7 @@ func (r *Runner) startClientDaemonSources(ctx context.Context, logger *slog.Logg
 			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcpv6-client-" + name, Kind: "routerd-dhcpv6-client", Instance: name},
 			Socket:    socket,
 			Publisher: r.Bus,
-			// A synchronized PD lease may already be Bound when the supervised
+			// A synchronized PD lease may already be Bound when the unit-managed
 			// daemon starts after VRRP takeover.  Publish only its newest event
 			// after fast-forwarding so DaemonStatusController refreshes the
 			// Bound status immediately, without replaying old lease history.
@@ -1228,7 +1203,6 @@ func (r *Runner) startClientDaemonSources(ctx context.Context, logger *slog.Logg
 }
 
 func (r *Runner) Start(ctx context.Context) error {
-	r.clientDaemonContext = ctx
 	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
@@ -1574,7 +1548,7 @@ func scheduledReconcileSkipsController(name string) bool {
 		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
 		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
 		"ingress-service", "nat44", "bfd", "bgp", "vrrp", "ip-address-set", "firewall", "observability-pipeline",
-		"daemon-status", "daemon-supervisor", "daemon-supervisor-reconcile", "dhcp-lease-sync", "nat44-session-sync":
+		"daemon-status", "client-service-unit", "arp-observer-sync", "dhcp-lease-sync", "nat44-session-sync":
 		return true
 	default:
 		return false
@@ -1639,7 +1613,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
 	vxlanTunnel := VXLANTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
-	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits, BGPSocketPath: opts.BGPSocketPath, BGPControlSocketPath: opts.BGPControlSocketPath, BGPStatePath: opts.BGPStatePath}
+	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, BGPSocketPath: opts.BGPSocketPath, BGPControlSocketPath: opts.BGPControlSocketPath, BGPStatePath: opts.BGPStatePath}
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
 	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets}
@@ -1695,7 +1669,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		Router:           r.currentRouter(),
 		Bus:              r.Bus,
 		Store:            mobilityData,
-		ProbeARP:         r.probeARPObservers,
+		ProbeARP:         r.probearpObservers,
 		ARPProbeRequests: mobilitycontroller.NewARPProbeRequestTracker(),
 		StartedAt:        r.startedAt(),
 	}
@@ -2218,11 +2192,30 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			vrrp.Router = effective
 			return didWorkError(vrrp.Reconcile(ctx))
 		}},
-		// Client daemons with a VRRP role condition must be supervised only
-		// after this generation has observed the kernel-owned VIP.  A persisted
-		// role from the previous process is not authoritative during startup.
-		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.currentRouter(), "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			return false, r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
+		// Keep client lifecycle after VRRP has observed the kernel-owned VIP.
+		framework.FuncController{ControllerName: "client-service-unit", Every: 5 * time.Second, Subs: withDynamicConfigPartSubscriptions(serviceUnitStatusSubscriptions(r.currentRouter())), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := serviceUnits
+			current.Router = effective
+			if haDecision.Enabled && !haDecision.Leader {
+				// Standby must stop local clients, while explicit dry-run still
+				// forbids mutations. Other host controllers remain dry-run.
+				current.Router = &api.Router{Metadata: effective.Metadata}
+				current.DryRun = r.Opts.DryRunServiceUnit
+			} else {
+				current.arpObservers, err = r.mobilityARPObserverDaemonSpecsWithError()
+				if err != nil {
+					return false, err
+				}
+			}
+			environment, err := render.TelemetryEnvironment(effective)
+			if err != nil {
+				return false, err
+			}
+			return didWorkError(current.reconcileClientDaemonUnits(ctx, environment))
 		}},
 	}
 	if !opts.FirewallDisabled {
@@ -2246,8 +2239,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		current.Router = effective
 		return didWorkError(current.Reconcile(ctx))
 	}})
-	if opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
-		controllers = append(controllers, framework.FuncController{ControllerName: "daemon-supervisor-reconcile", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+	if r.controllerEnabled("service-unit") {
+		controllers = append(controllers, framework.FuncController{ControllerName: "arp-observer-sync", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			return false, r.reconcileARPObserverDaemons(ctx, logger)
 		}})
 	}
@@ -2316,7 +2309,11 @@ func (r *Runner) filterControllers(controllers []framework.Controller) []framewo
 	}
 	out := make([]framework.Controller, 0, len(controllers))
 	for _, controller := range controllers {
-		if r.controllerEnabled(controller.Name()) {
+		name := controller.Name()
+		if name == "client-service-unit" || name == "arp-observer-sync" {
+			name = "service-unit"
+		}
+		if r.controllerEnabled(name) {
 			out = append(out, controller)
 		}
 	}
@@ -2451,215 +2448,6 @@ func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatus
 	}
 }
 
-func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *api.Router, logger *slog.Logger) error {
-	if !r.Opts.SuperviseClientDaemons {
-		return nil
-	}
-	specs := r.clientDaemonSpecs(router)
-	arpSpecs, arpErr := r.mobilityARPObserverDaemonSpecsWithError()
-	for _, spec := range arpSpecs {
-		specs = append(specs, supervisedDaemonSpec{ResourceName: spec.ResourceName, Binary: "routerd-arp-observer", Args: arpObserverDaemonArgs(spec)})
-	}
-	return errors.Join(arpErr, r.reconcileSupervisedDaemonSpecs(ctx, logger, specs, arpErr == nil))
-}
-
-func (r *Runner) daemonSupervisionRouter(store eventedStore) *api.Router {
-	return resourcequery.FilterRouterByResolvedWhen(r.currentRouter(), store)
-}
-
-func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
-	if router == nil {
-		return nil
-	}
-	var out []supervisedDaemonSpec
-	for _, resource := range router.Spec.Resources {
-		switch resource.Kind {
-		case "DHCPv6PrefixDelegation":
-			spec, err := resource.DHCPv6PrefixDelegationSpec()
-			if err != nil || api.EffectiveIPv6PDClient(spec.Client) != api.IPv6PDClientRouterd {
-				continue
-			}
-			ifname := interfaceIfName(router, spec.Interface)
-			if ifname == "" {
-				ifname = spec.Interface
-			}
-			defaults, _ := platform.Current()
-			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname,
-				"--socket", filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource.Metadata.Name+".sock"),
-				"--lease-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource.Metadata.Name, "lease.json"),
-				"--event-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource.Metadata.Name, "events.jsonl"),
-			}
-			if spec.IAID != "" {
-				args = append(args, "--iaid", spec.IAID)
-			}
-			if spec.ClientDUID != "" {
-				args = append(args, "--client-duid", spec.ClientDUID)
-			}
-			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv6-client", Args: args})
-		case "DHCPv4Client":
-			spec, err := resource.DHCPv4ClientSpec()
-			if err != nil {
-				continue
-			}
-			ifname := interfaceIfName(router, spec.Interface)
-			if ifname == "" {
-				ifname = spec.Interface
-			}
-			defaults, _ := platform.Current()
-			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname,
-				"--socket", filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource.Metadata.Name+".sock"),
-				"--lease-file", filepath.Join(defaults.StateDir, "dhcpv4-client", resource.Metadata.Name, "lease.json"),
-				"--event-file", filepath.Join(defaults.StateDir, "dhcpv4-client", resource.Metadata.Name, "events.jsonl"),
-			}
-			if spec.Hostname != "" {
-				args = append(args, "--hostname", spec.Hostname)
-			}
-			if spec.RequestedAddress != "" {
-				args = append(args, "--requested-address", spec.RequestedAddress)
-			}
-			if spec.ClassID != "" {
-				args = append(args, "--class-id", spec.ClassID)
-			}
-			if spec.ClientID != "" {
-				args = append(args, "--client-id", spec.ClientID)
-			}
-			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv4-client", Args: args})
-		case "PPPoESession":
-			spec, err := resource.PPPoESessionSpec()
-			if err != nil || pppoeSessionDisabled(spec) {
-				continue
-			}
-			ifname := interfaceIfName(router, spec.Interface)
-			if ifname == "" {
-				ifname = spec.Interface
-			}
-			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname, "--username", spec.Username}
-			if spec.PasswordFile != "" {
-				args = append(args, "--password-file", spec.PasswordFile)
-			} else if spec.Password != "" {
-				args = append(args, "--password", spec.Password)
-			}
-			if spec.AuthMethod != "" {
-				args = append(args, "--auth-method", spec.AuthMethod)
-			}
-			if spec.MTU != 0 {
-				args = append(args, "--mtu", fmt.Sprintf("%d", spec.MTU))
-			}
-			if spec.MRU != 0 {
-				args = append(args, "--mru", fmt.Sprintf("%d", spec.MRU))
-			}
-			if spec.ServiceName != "" {
-				args = append(args, "--service-name", spec.ServiceName)
-			}
-			if spec.ACName != "" {
-				args = append(args, "--ac-name", spec.ACName)
-			}
-			if spec.LCPEchoInterval != 0 {
-				args = append(args, "--lcp-echo-interval", fmt.Sprintf("%d", spec.LCPEchoInterval))
-			}
-			if spec.LCPEchoFailure != 0 {
-				args = append(args, "--lcp-echo-failure", fmt.Sprintf("%d", spec.LCPEchoFailure))
-			}
-			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-pppoe-client", Args: args})
-		}
-	}
-	return out
-}
-
-func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slog.Logger, specs []supervisedDaemonSpec, reconcileARP bool) error {
-	desired := make(map[string]supervisedDaemonSpec, len(specs))
-	for _, spec := range specs {
-		if spec.ResourceName != "" && spec.Binary != "" {
-			desired[supervisedDaemonKey(spec.Binary, spec.ResourceName)] = spec
-		}
-	}
-	processes, err := listSupervisedDaemonProcesses()
-	if err != nil {
-		return fmt.Errorf("list routerd client daemons: %w", err)
-	}
-	var stopErrors []error
-	r.supervisedMu.Lock()
-	if r.clientDaemonStates == nil {
-		r.clientDaemonStates = map[string]supervisedDaemonState{}
-	}
-	for key, state := range r.clientDaemonStates {
-		if !reconcileARP && state.Spec.Binary == "routerd-arp-observer" {
-			continue
-		}
-		next, ok := desired[key]
-		if ok && supervisedDaemonSpecEqual(state.Spec, next) {
-			select {
-			case <-state.Done:
-				delete(r.clientDaemonStates, key)
-				if state.Spec.Binary == "routerd-arp-observer" {
-					r.clearARPObserverReadyLocked(state.Spec.ResourceName)
-				}
-			default:
-				continue
-			}
-		} else {
-			state.Cancel()
-			delete(r.clientDaemonStates, key)
-			if state.Spec.Binary == "routerd-arp-observer" {
-				r.clearARPObserverReadyLocked(state.Spec.ResourceName)
-			}
-		}
-	}
-	r.supervisedMu.Unlock()
-	for _, process := range processes {
-		binary, resource := supervisedProcessIdentity(process.Args)
-		if binary == "" || (!reconcileARP && binary == "routerd-arp-observer") {
-			continue
-		}
-		spec, ok := desired[supervisedDaemonKey(binary, resource)]
-		if ok && supervisedProcessMatches(process.Args, spec) {
-			continue
-		}
-		if binary == "routerd-arp-observer" {
-			r.setARPObserverReady(resource, false)
-		}
-		if err := stopSupervisedProcess(process.PID); err != nil {
-			stopErrors = append(stopErrors, fmt.Errorf("stop stale %s/%s: %w", binary, resource, err))
-		}
-	}
-	r.supervisedMu.Lock()
-	for key, spec := range desired {
-		if _, ok := r.clientDaemonStates[key]; ok {
-			continue
-		}
-		parent := r.clientDaemonContext
-		if parent == nil {
-			parent = ctx
-		}
-		childCtx, cancel := context.WithCancel(parent)
-		done := r.startSupervisedDaemonSpec(childCtx, logger, spec)
-		r.clientDaemonStates[key] = supervisedDaemonState{Spec: spec, Cancel: cancel, Done: done}
-	}
-	r.supervisedMu.Unlock()
-	if reconcileARP {
-		if err := r.reconcileARPObserverDaemons(ctx, logger); err != nil {
-			stopErrors = append(stopErrors, err)
-		}
-	}
-	return errors.Join(stopErrors...)
-}
-
-func supervisedDaemonKey(binary, resourceName string) string {
-	return binary + "/" + resourceName
-}
-
-func supervisedDaemonSpecEqual(a, b supervisedDaemonSpec) bool {
-	if a.ResourceName != b.ResourceName || a.Binary != b.Binary || len(a.Args) != len(b.Args) {
-		return false
-	}
-	for i := range a.Args {
-		if a.Args[i] != b.Args[i] {
-			return false
-		}
-	}
-	return true
-}
-
 type mobilityARPObserverDaemonSpec struct {
 	ResourceName      string
 	PoolName          string
@@ -2742,14 +2530,14 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 	for _, spec := range specs {
 		desired[spec.ResourceName] = spec.Socket
 	}
-	r.supervisedMu.Lock()
+	r.arpObserverMu.Lock()
 	for name, active := range r.daemonSourcesStarted {
 		if socket, ok := desired[name]; !ok || socket != active.socket || !r.arpObserverReadySet[name] {
 			active.cancel()
 			delete(r.daemonSourcesStarted, name)
 		}
 	}
-	r.supervisedMu.Unlock()
+	r.arpObserverMu.Unlock()
 
 	for _, spec := range specs {
 		r.startARPObserverDaemonSource(ctx, logger, spec)
@@ -2757,18 +2545,18 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 }
 
 func (r *Runner) startARPObserverDaemonSource(ctx context.Context, logger *slog.Logger, spec mobilityARPObserverDaemonSpec) {
-	r.supervisedMu.Lock()
+	r.arpObserverMu.Lock()
 	if r.daemonSourcesStarted == nil {
 		r.daemonSourcesStarted = make(map[string]*arpDaemonSource)
 	}
 	if !r.arpObserverReadySet[spec.ResourceName] || r.daemonSourcesStarted[spec.ResourceName] != nil {
-		r.supervisedMu.Unlock()
+		r.arpObserverMu.Unlock()
 		return
 	}
 	sourceCtx, cancel := context.WithCancel(ctx)
 	active := &arpDaemonSource{socket: spec.Socket, cancel: cancel}
 	r.daemonSourcesStarted[spec.ResourceName] = active
-	r.supervisedMu.Unlock()
+	r.arpObserverMu.Unlock()
 
 	source := daemonsource.DaemonSource{
 		Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
@@ -2782,11 +2570,11 @@ func (r *Runner) startARPObserverDaemonSource(ctx context.Context, logger *slog.
 	}
 	go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
 		defer func() {
-			r.supervisedMu.Lock()
+			r.arpObserverMu.Lock()
 			if r.daemonSourcesStarted[spec.ResourceName] == active {
 				delete(r.daemonSourcesStarted, spec.ResourceName)
 			}
-			r.supervisedMu.Unlock()
+			r.arpObserverMu.Unlock()
 			cancel()
 		}()
 		if err := source.Run(sourceCtx); err != nil && sourceCtx.Err() == nil && logger != nil {
@@ -2804,7 +2592,7 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 	for _, spec := range specs {
 		desired[spec.ResourceName] = true
 	}
-	r.supervisedMu.Lock()
+	r.arpObserverMu.Lock()
 	for name, active := range r.arpObserverSyncs {
 		if !desired[name] {
 			active.cancel()
@@ -2815,7 +2603,7 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 			delete(r.arpObserverReadySet, name)
 		}
 	}
-	r.supervisedMu.Unlock()
+	r.arpObserverMu.Unlock()
 	var syncErrors []error
 	for _, spec := range specs {
 		if r.arpObserverReady(spec.ResourceName) {
@@ -2873,135 +2661,6 @@ func arpObserverDaemonArgs(spec mobilityARPObserverDaemonSpec) []string {
 	return args
 }
 
-func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Logger, spec supervisedDaemonSpec) <-chan struct{} {
-	resourceName, binary, args := spec.ResourceName, spec.Binary, append([]string(nil), spec.Args...)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		var observedPID int
-		for ctx.Err() == nil {
-		waitForExisting:
-			for ctx.Err() == nil {
-				var processes []supervisedDaemonProcess
-				if observedPID != 0 && runtime.GOOS == "linux" {
-					data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(observedPID), "cmdline"))
-					if err == nil && len(data) != 0 {
-						args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
-						name, resource := supervisedProcessIdentity(args)
-						if name == binary && resource == resourceName {
-							processes = []supervisedDaemonProcess{{PID: observedPID, Args: args}}
-						}
-					}
-				}
-				var err error
-				if len(processes) == 0 {
-					processes, err = listSupervisedDaemonProcesses()
-				}
-				if err != nil {
-					if logger != nil {
-						logger.Error("list routerd client daemons", "error", err)
-					}
-				} else {
-					running := false
-					for _, process := range processes {
-						processBinary, processResource := supervisedProcessIdentity(process.Args)
-						if processBinary == binary && processResource == resourceName {
-							if binary == "routerd-arp-observer" && observedPID != 0 && observedPID != process.PID {
-								r.setARPObserverReady(resourceName, false)
-							}
-							observedPID = process.PID
-							running = true
-							break
-						}
-					}
-					if !running {
-						observedPID = 0
-						if binary == "routerd-arp-observer" {
-							r.setARPObserverReady(resourceName, false)
-						}
-						if !clientSocketReady(defaultClientSocket(binary, resourceName)) {
-							break waitForExisting
-						}
-					}
-				}
-				select {
-				case <-time.After(10 * time.Second):
-					continue
-				case <-ctx.Done():
-					return
-				}
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			path := routerdClientBinary(binary)
-			cmdArgs := append([]string(nil), args...)
-			cmd := exec.CommandContext(ctx, path, cmdArgs...)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if logger != nil {
-				logger.Info("starting supervised routerd client daemon", "binary", path, "resource", resourceName)
-			}
-			if err := cmd.Start(); err != nil {
-				if logger != nil {
-					logger.Warn("supervised routerd client daemon failed to start", "binary", path, "resource", resourceName, "error", err)
-				}
-				select {
-				case <-time.After(5 * time.Second):
-					continue
-				case <-ctx.Done():
-					return
-				}
-			}
-			err := cmd.Wait()
-			if binary == "routerd-arp-observer" {
-				r.setARPObserverReady(resourceName, false)
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			if logger != nil {
-				logger.Warn("supervised routerd client daemon exited", "binary", path, "resource", resourceName, "error", err)
-			}
-			select {
-			case <-time.After(5 * time.Second):
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return done
-}
-
-func routerdClientBinary(name string) string {
-	if path, err := exec.LookPath(name); err == nil {
-		return path
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), name)
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return candidate
-		}
-	}
-	return filepath.Join("/usr/local/sbin", name)
-}
-
-func defaultClientSocket(binary, resource string) string {
-	defaults, _ := platform.Current()
-	switch binary {
-	case "routerd-dhcpv6-client":
-		return filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource+".sock")
-	case "routerd-dhcpv4-client":
-		return filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource+".sock")
-	case "routerd-pppoe-client":
-		return filepath.Join(defaults.RuntimeDir, "pppoe-client", resource+".sock")
-	case "routerd-arp-observer":
-		return filepath.Join(defaults.RuntimeDir, "arp-observer", resource+".sock")
-	default:
-		return ""
-	}
-}
-
 func clientSocketReady(socket string) bool {
 	if socket == "" {
 		return false
@@ -3033,7 +2692,7 @@ func (r *Runner) syncARPObserverIgnoredSenderMACs(ctx context.Context, spec mobi
 }
 
 func (r *Runner) startARPObserverInitialSync(ctx context.Context, spec mobilityARPObserverDaemonSpec, logger *slog.Logger) {
-	r.supervisedMu.Lock()
+	r.arpObserverMu.Lock()
 	if r.arpObserverSyncs == nil {
 		r.arpObserverSyncs = make(map[string]*arpObserverSync)
 	}
@@ -3041,17 +2700,17 @@ func (r *Runner) startARPObserverInitialSync(ctx context.Context, spec mobilityA
 		if !reflect.DeepEqual(active.spec, spec) {
 			active.cancel()
 		}
-		r.supervisedMu.Unlock()
+		r.arpObserverMu.Unlock()
 		return
 	}
 	syncCtx, cancel := context.WithCancel(ctx)
 	active := &arpObserverSync{spec: spec, cancel: cancel}
 	r.arpObserverSyncs[spec.ResourceName] = active
-	r.supervisedMu.Unlock()
+	r.arpObserverMu.Unlock()
 	go func() {
 		err := r.syncARPObserverIgnoredSenderMACs(syncCtx, spec)
 		ready := false
-		r.supervisedMu.Lock()
+		r.arpObserverMu.Lock()
 		if r.arpObserverSyncs[spec.ResourceName] == active {
 			delete(r.arpObserverSyncs, spec.ResourceName)
 			if syncCtx.Err() == nil {
@@ -3066,7 +2725,7 @@ func (r *Runner) startARPObserverInitialSync(ctx context.Context, spec mobilityA
 				}
 			}
 		}
-		r.supervisedMu.Unlock()
+		r.arpObserverMu.Unlock()
 		if ready {
 			r.startARPObserverDaemonSource(ctx, logger, spec)
 		}
@@ -3078,14 +2737,14 @@ func (r *Runner) startARPObserverInitialSync(ctx context.Context, spec mobilityA
 }
 
 func (r *Runner) arpObserverReady(resourceName string) bool {
-	r.supervisedMu.Lock()
-	defer r.supervisedMu.Unlock()
+	r.arpObserverMu.Lock()
+	defer r.arpObserverMu.Unlock()
 	return r.arpObserverReadySet != nil && r.arpObserverReadySet[resourceName]
 }
 
 func (r *Runner) setARPObserverReady(resourceName string, ready bool) {
-	r.supervisedMu.Lock()
-	defer r.supervisedMu.Unlock()
+	r.arpObserverMu.Lock()
+	defer r.arpObserverMu.Unlock()
 	if r.arpObserverReadySet == nil {
 		r.arpObserverReadySet = make(map[string]bool)
 	}
@@ -3169,7 +2828,7 @@ func postARPObserverCommand(ctx context.Context, socketPath string, reqBody daem
 	return nil
 }
 
-func (r *Runner) probeARPObservers(ctx context.Context, poolName, address string) error {
+func (r *Runner) probearpObservers(ctx context.Context, poolName, address string) error {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(address))
 	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
 		return fmt.Errorf("ARP probe target must be an IPv4 /32: %q", address)
@@ -3261,93 +2920,6 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
-}
-
-func supervisedProcessIdentity(args []string) (string, string) {
-	if len(args) < 2 || args[1] != "daemon" {
-		return "", ""
-	}
-	binary := filepath.Base(args[0])
-	switch binary {
-	case "routerd-dhcpv4-client", "routerd-dhcpv6-client", "routerd-pppoe-client", "routerd-arp-observer":
-	default:
-		return "", ""
-	}
-	for i := 2; i < len(args); i++ {
-		if args[i] == "--resource" && i+1 < len(args) && args[i+1] != "" {
-			return binary, args[i+1]
-		}
-		if strings.HasPrefix(args[i], "--resource=") && args[i] != "--resource=" {
-			return binary, strings.TrimPrefix(args[i], "--resource=")
-		}
-	}
-	return "", ""
-}
-
-func supervisedProcessMatches(args []string, spec supervisedDaemonSpec) bool {
-	if len(args) == 0 || filepath.Base(args[0]) != spec.Binary {
-		return false
-	}
-	actual := make([]string, 0, len(args)-1)
-	for i := 1; i < len(args); i++ {
-		if args[i] == "--supervisor-owner" && i+1 < len(args) {
-			i++
-			continue
-		}
-		if strings.HasPrefix(args[i], "--supervisor-owner=") {
-			continue
-		}
-		actual = append(actual, args[i])
-	}
-	return equalStringSlices(actual, spec.Args)
-}
-
-func stopSupervisedProcess(pid int) error {
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return err
-	}
-	return nil
-}
-
-func listSupervisedDaemonProcesses() ([]supervisedDaemonProcess, error) {
-	if runtime.GOOS == "linux" {
-		entries, err := os.ReadDir("/proc")
-		if err != nil {
-			return nil, err
-		}
-		var processes []supervisedDaemonProcess
-		for _, entry := range entries {
-			pid, err := strconv.Atoi(entry.Name())
-			if err != nil || pid == os.Getpid() {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
-			if err != nil || len(data) == 0 {
-				continue
-			}
-			processes = append(processes, supervisedDaemonProcess{PID: pid, Args: strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")})
-		}
-		return processes, nil
-	}
-	if runtime.GOOS == "freebsd" {
-		data, err := exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=").Output()
-		if err != nil {
-			return nil, err
-		}
-		var processes []supervisedDaemonProcess
-		for _, line := range strings.Split(string(data), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				continue
-			}
-			pid, err := strconv.Atoi(fields[0])
-			if err == nil {
-				processes = append(processes, supervisedDaemonProcess{PID: pid, Args: fields[1:]})
-			}
-		}
-		return processes, nil
-	}
-	return nil, fmt.Errorf("unsupported process listing on %s", runtime.GOOS)
 }
 
 type LANAddressController struct {
@@ -5773,6 +5345,19 @@ func removeDnsmasq(ctx context.Context, configPath, pidFile string) error {
 				return err
 			}
 		}
+		watcher := "routerd-dhcp-fingerprint-watcher.service"
+		watcherPath := filepath.Join(defaults.SystemdSystemDir, watcher)
+		if _, err := os.Stat(watcherPath); err == nil {
+			if err := runSystemctl(ctx, "disable", "--now", watcher); err != nil {
+				return err
+			}
+			if err := os.Remove(watcherPath); err != nil {
+				return err
+			}
+			loaded = true
+		} else if !os.IsNotExist(err) {
+			return err
+		}
 		unitPath := filepath.Join(defaults.SystemdSystemDir, service)
 		if _, err := os.Stat(unitPath); err == nil {
 			if err := runSystemctl(ctx, "disable", service); err != nil {
@@ -5894,11 +5479,16 @@ func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, confi
 	}
 	command = dnsmasqCommandPath(command)
 	servicePath := filepath.Join(systemdDir, service)
+	defaults, _ := platform.Current()
+	watcherChanged, err := writeFileIfChanged(filepath.Join(systemdDir, "routerd-dhcp-fingerprint-watcher.service"), render.DHCPFingerprintWatcherSystemdUnit(defaults.StateDir), 0644, false)
+	if err != nil {
+		return err
+	}
 	unitChanged, err := writeFileIfChanged(servicePath, render.DnsmasqServiceUnitWithPID(configPath, pidFile, command), 0644, false)
 	if err != nil {
 		return err
 	}
-	if unitChanged {
+	if unitChanged || watcherChanged {
 		if err := runSystemctl(ctx, "daemon-reload"); err != nil {
 			return err
 		}
@@ -5922,6 +5512,13 @@ func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, confi
 			return err
 		}
 		state.active = true
+	}
+	if watcherChanged {
+		if err := runSystemctl(ctx, "restart", "routerd-dhcp-fingerprint-watcher.service"); err != nil {
+			return err
+		}
+	} else if err := runSystemctl(ctx, "start", "routerd-dhcp-fingerprint-watcher.service"); err != nil {
+		return err
 	}
 	state.checkedAt = time.Now()
 	storeDnsmasqSystemdState(servicePath, command, configPath, pidFile, state)

@@ -134,13 +134,6 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 	}
 }
 
-func TestDnsmasqServiceUnitWithCustomPIDFile(t *testing.T) {
-	unit := string(DnsmasqServiceUnitWithPID("/run/routerd/dnsmasq.conf", "/run/routerd/dnsmasq-custom.pid", "/usr/sbin/dnsmasq"))
-	if !strings.Contains(unit, "ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/run/routerd/dnsmasq.conf --pid-file=/run/routerd/dnsmasq-custom.pid") {
-		t.Fatalf("unit did not include custom pid file:\n%s", unit)
-	}
-}
-
 func TestDnsmasqConfigExcludesDNSResolverSources(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
