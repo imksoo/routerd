@@ -110,7 +110,7 @@ Declares host-side receipt of IPv6 router advertisements/SLAAC. This is an RA cl
 
 [PPPoESession](resources/PPPoESession.md)
 
-Run a supervised routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.
+Run a service-managed routerd-pppoe-client using pppd on Linux or mpd5 on FreeBSD, and publish negotiated IPv4 session status. Several legacy fields affect only manual FreeBSD render output, not this daemon path.
 
 ## VPN and tunnels
 

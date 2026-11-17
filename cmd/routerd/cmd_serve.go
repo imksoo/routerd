@@ -44,7 +44,9 @@ import (
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	statuswriter "github.com/imksoo/routerd/pkg/status"
@@ -109,7 +111,7 @@ func controllerResourceKinds(name string) []string {
 	case "route":
 		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "EgressRoutePolicy"}
 	case "service-unit":
-		return []string{"ServiceUnit", "TailscaleNode", "HealthCheck", "FirewallEventLog", "TrafficFlowLog"}
+		return []string{"ServiceUnit", "TailscaleNode", "HealthCheck", "FirewallEventLog", "TrafficFlowLog", "DHCPv4Client", "DHCPv6PrefixDelegation", "PPPoESession", "IPv6RouterAdvertisement"}
 	default:
 		return nil
 	}
@@ -277,6 +279,23 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err := config.Validate(router); err != nil {
 		return fmt.Errorf("validate config %s: %w", *configPath, err)
 	}
+	telemetryEnv, err := render.TelemetryEnvironment(router)
+	if err != nil {
+		return err
+	}
+	for _, entry := range telemetryEnv {
+		key, value, _ := strings.Cut(entry, "=")
+		if _, set := os.LookupEnv(key); !set {
+			if err := os.Setenv(key, value); err != nil {
+				return err
+			}
+		}
+	}
+	telemetry, err := routerotel.Setup(context.Background(), "routerd")
+	if err != nil {
+		return err
+	}
+	defer telemetry.ShutdownGracefully()
 	httpControl, err := resolveControlAPIHTTPConfig(router, strings.TrimSpace(*httpListen), []string(httpAllowCIDRs), api.SecretValueSourceSpec{File: strings.TrimSpace(*httpTokenFile), Env: strings.TrimSpace(*httpTokenEnv)}, controlAPITLSConfig{CertFile: strings.TrimSpace(*httpTLSCertFile), KeyFile: strings.TrimSpace(*httpTLSKeyFile), ClientCAFile: strings.TrimSpace(*httpTLSClientCAFile)}, setFlags)
 	if err != nil {
 		return err
@@ -386,23 +405,22 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 	}
 	controllerOpts := controllerchain.Options{
-		SuperviseClientDaemons: true,
-		DnsmasqCommand:         "dnsmasq",
-		DnsmasqConfig:          *dnsmasqConfigPath,
-		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
-		DnsmasqPort:            53,
-		DnsmasqListen:          []string{"127.0.0.1"},
-		NftablesPath:           *nftablesPath,
-		FirewallPath:           "/run/routerd/firewall.nft",
-		NftCommand:             "nft",
-		BGPSocketPath:          *bgpSocketPath,
-		BGPControlSocketPath:   *bgpControlSocketPath,
-		BGPStatePath:           *bgpStatePath,
-		ConntrackInterval:      30 * time.Second,
-		ControllerObserver:     controllerRuntime,
-		EnabledControllers:     enabledControllers,
-		PeerGroupSyncClient:    peerGroupSyncClient,
-		MutationGate:           mutationGate,
+		DnsmasqCommand:       "dnsmasq",
+		DnsmasqConfig:        *dnsmasqConfigPath,
+		DnsmasqPID:           filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
+		DnsmasqPort:          53,
+		DnsmasqListen:        []string{"127.0.0.1"},
+		NftablesPath:         *nftablesPath,
+		FirewallPath:         "/run/routerd/firewall.nft",
+		NftCommand:           "nft",
+		BGPSocketPath:        *bgpSocketPath,
+		BGPControlSocketPath: *bgpControlSocketPath,
+		BGPStatePath:         *bgpStatePath,
+		ConntrackInterval:    30 * time.Second,
+		ControllerObserver:   controllerRuntime,
+		EnabledControllers:   enabledControllers,
+		PeerGroupSyncClient:  peerGroupSyncClient,
+		MutationGate:         mutationGate,
 	}
 	chainRunner = &controllerchain.Runner{
 		Router: router,
@@ -942,7 +960,6 @@ func bgpServeDefaultPaths(defaults platform.Defaults) (socket, controlSocket, st
 }
 
 func applyDryRunControllerOptions(opts *controllerchain.Options, dnsmasqConfigPath, nftablesPath string) {
-	opts.SuperviseClientDaemons = false
 	opts.DryRunAddress = true
 	opts.DryRunDSLite = true
 	opts.DryRunRoute = true

@@ -40,10 +40,10 @@ router. Read the result, then remove the temporary directory when finished.
 
 ## Live one-shot apply
 
-`routerd apply --once` changes the host and exits. It does not supervise DHCP,
-PPPoE or DHCPv6-PD client processes, even if it transfers their configuration
-from an existing network manager. Start `routerd serve` for ongoing client
-operation. Use a console or an independent management path after reviewing the
+`routerd apply --once` changes the host, reconciles client service units and exits.
+The service manager keeps configured clients running; `routerd serve` performs
+ongoing reconciliation of configuration, `When` and HA conditions and serves the
+control API. Use a console or an independent management path after reviewing the
 configuration:
 
 ```bash

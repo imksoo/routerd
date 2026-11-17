@@ -434,13 +434,13 @@ type SystemdUnitController struct {
 	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store                       Store
-	DryRun                      bool
-	systemdSystemDir            string
-	SynthesizeClientDaemonUnits bool
-	BGPSocketPath               string
-	BGPControlSocketPath        string
-	BGPStatePath                string
+	Store                Store
+	DryRun               bool
+	systemdSystemDir     string
+	arpObservers         []mobilityARPObserverDaemonSpec
+	BGPSocketPath        string
+	BGPControlSocketPath string
+	BGPStatePath         string
 }
 
 func (c SystemdUnitController) bgpSystemdSpec(defaults platform.Defaults) api.SystemdUnitSpec {
@@ -458,26 +458,6 @@ func (c SystemdUnitController) bgpSystemdSpec(defaults platform.Defaults) api.Sy
 	return render.BGPSystemdSpecWithPaths(socket, control, state)
 }
 
-// RenderRouterdServiceSystemdUnit returns the routerd.service content that
-// SystemdUnitController reconciles for the supplied router. Live boot uses it
-// before starting routerd so configuration-dependent process settings are
-// already present on the first daemon process.
-func RenderRouterdServiceSystemdUnit(router *api.Router) ([]byte, error) {
-	telemetryEnv, err := render.TelemetryEnvironment(router)
-	if err != nil {
-		return nil, err
-	}
-	spec := routerdServiceSystemdSpec(router, telemetryEnv)
-	return render.SystemdUnit(render.RouterdUnitName, spec), nil
-}
-
-func routerdServiceSystemdSpec(router *api.Router, telemetryEnv []string) api.SystemdUnitSpec {
-	spec := render.RouterdServiceSystemdSpec()
-	spec = maybeAugmentRouterdServiceAccess(router, render.RouterdUnitName, spec)
-	spec.Environment = mergeStringEnvs(spec.Environment, telemetryEnv)
-	return spec
-}
-
 func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	defaults, features := platform.Current()
 	if c.systemdSystemDir == "" {
@@ -489,10 +469,6 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	}
 	if features.HasSystemd {
 		explicitUnits := map[string]bool{}
-		routerdSpec := routerdServiceSystemdSpec(c.Router, telemetryEnv)
-		if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.RouterdUnitName, "Router/"+c.Router.Metadata.Name, routerdSpec); err != nil {
-			return err
-		}
 		if routerHasBGP(c.Router) {
 			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", c.bgpSystemdSpec(defaults)); err != nil {
 				return err
@@ -512,13 +488,6 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if err := c.cleanupStaleEventFederationUnits(ctx); err != nil {
-			return err
-		}
-		if c.SynthesizeClientDaemonUnits {
-			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv); err != nil {
-				return err
-			}
-		} else if err := c.cleanupStaleClientDaemonUnits(ctx); err != nil {
 			return err
 		}
 		for _, resource := range c.Router.Spec.Resources {
@@ -904,63 +873,6 @@ func boolPointerStatus(value *bool) any {
 	return *value
 }
 
-func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, explicitUnits map[string]bool, telemetryEnv []string) error {
-	aliases := interfaceAliases(c.Router)
-	for _, resource := range c.Router.Spec.Resources {
-		switch resource.Kind {
-		case "DHCPv4Client":
-			spec, err := resource.DHCPv4ClientSpec()
-			if err != nil {
-				return err
-			}
-			ifname := aliases[spec.Interface]
-			if ifname == "" {
-				return fmt.Errorf("%s references interface %q with no ifname", resource.ID(), spec.Interface)
-			}
-			unitName := "routerd-dhcpv4-client@" + resource.Metadata.Name + ".service"
-			if explicitUnits[unitName] {
-				continue
-			}
-			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv4Client", resource.Metadata.Name, unitName, dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)); err != nil {
-				return err
-			}
-		case "DHCPv6PrefixDelegation":
-			spec, err := resource.DHCPv6PrefixDelegationSpec()
-			if err != nil {
-				return err
-			}
-			ifname := aliases[spec.Interface]
-			if ifname == "" {
-				return fmt.Errorf("%s references interface %q with no ifname", resource.ID(), spec.Interface)
-			}
-			unitName := "routerd-dhcpv6-client@" + resource.Metadata.Name + ".service"
-			if explicitUnits[unitName] {
-				continue
-			}
-			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv6PrefixDelegation", resource.Metadata.Name, unitName, dhcpv6ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)); err != nil {
-				return err
-			}
-		case "IPv6RouterAdvertisement":
-			spec, err := resource.IPv6RouterAdvertisementSpec()
-			if err != nil {
-				return err
-			}
-			ifname := aliases[spec.Interface]
-			if ifname == "" {
-				ifname = spec.Interface
-			}
-			unitName := "routerd-ra-observer@" + resource.Metadata.Name + ".service"
-			if explicitUnits[unitName] {
-				continue
-			}
-			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "RogueRADetector", resource.Metadata.Name, unitName, raObserverUnitSpec(resource.Metadata.Name, ifname, telemetryEnv)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func (c SystemdUnitController) reconcileDNSResolverUnits(ctx context.Context, stateDir string) error {
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSResolver" {
@@ -1083,57 +995,6 @@ func eventFederationUnitName(group string) string {
 
 func eventGroupRunsEventd(spec api.EventGroupSpec) bool {
 	return strings.TrimSpace(spec.Auth.SecretFile) != ""
-}
-
-func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec) error {
-	path := filepath.Join(c.systemdSystemDir, unitName)
-	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec)
-	if err != nil {
-		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
-			"phase":    "Error",
-			"reason":   "ApplyFailed",
-			"unitName": unitName,
-			"path":     path,
-			"source":   kind + "/" + resourceName,
-			"error":    err.Error(),
-			"dryRun":   c.DryRun,
-		}); saveErr != nil {
-			return saveErr
-		}
-		return err
-	}
-	phase := "Applied"
-	if c.DryRun && changed {
-		phase = "Rendered"
-	}
-	status := map[string]any{
-		"phase":    phase,
-		"unitName": unitName,
-		"path":     path,
-		"source":   kind + "/" + resourceName,
-		"changed":  changed,
-		"dryRun":   c.DryRun,
-	}
-	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
-		return err
-	}
-	resourceStatus := map[string]any{
-		"phase":     phase,
-		"unitName":  unitName,
-		"dryRun":    c.DryRun,
-		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	resourceStatus = preserveSystemdAnnotatedResourceStatus(kind, resourceStatus, c.Store.ObjectStatus(apiVersion, kind, resourceName))
-	if err := c.Store.SaveObjectStatus(apiVersion, kind, resourceName, resourceStatus); err != nil {
-		return err
-	}
-	if changed && !c.DryRun && c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
-		event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": kind + "/" + resourceName}
-		return c.Bus.Publish(ctx, event)
-	}
-	return nil
 }
 
 func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec) error {
@@ -1263,6 +1124,12 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context)
 		return nil
 	}
 	for _, resource := range c.DeclaredRouter.Spec.Resources {
+		// Client units have one lifecycle path, after fresh VRRP observation.
+		switch resource.Kind {
+		case "DHCPv4Client", "DHCPv6PrefixDelegation", "PPPoESession", "IPv6RouterAdvertisement":
+			continue
+		}
+
 		when := resourcequery.ResourceWhen(resource)
 		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) {
 			continue
@@ -1308,6 +1175,8 @@ func synthesizedUnitForResource(resource api.Resource) (synthesizedUnitRef, bool
 		ref.UnitName = "routerd-dhcpv4-client@" + name + ".service"
 	case "DHCPv6PrefixDelegation":
 		ref.UnitName = "routerd-dhcpv6-client@" + name + ".service"
+	case "PPPoESession":
+		ref.UnitName = "routerd-pppoe-client@" + name + ".service"
 	case "IPv6RouterAdvertisement":
 		ref.UnitName = "routerd-ra-observer@" + name + ".service"
 	case "DNSResolver":
@@ -1362,7 +1231,6 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, 
 			"dryRun":    c.DryRun,
 			"updatedAt": now,
 		}
-		resourceStatus = preserveSystemdAnnotatedResourceStatus(ref.Kind, resourceStatus, c.Store.ObjectStatus(ref.APIVersion, ref.Kind, ref.Name))
 		if err := c.Store.SaveObjectStatus(ref.APIVersion, ref.Kind, ref.Name, resourceStatus); err != nil {
 			return err
 		}
@@ -1375,15 +1243,6 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, 
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
-}
-
-func preserveSystemdAnnotatedResourceStatus(kind string, status, current map[string]any) map[string]any {
-	switch kind {
-	case "IPv6RouterAdvertisement":
-		return preserveStatusFields(status, current, "interface", "configPath", "pidFile", "renderer")
-	default:
-		return status
-	}
 }
 
 func interfaceAliases(router *api.Router) map[string]string {
@@ -1441,6 +1300,12 @@ func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, te
 func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
 	exec := []string{"/usr/local/sbin/routerd-dhcpv6-client", "daemon", "--resource", resource, "--interface", ifname}
+	defaults, _ := platform.Current()
+	exec = append(exec,
+		"--socket", filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource+".sock"),
+		"--lease-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource, "lease.json"),
+		"--event-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource, "events.jsonl"))
+
 	if spec.IAID != "" {
 		exec = append(exec, "--iaid", spec.IAID)
 	}
@@ -1514,54 +1379,6 @@ func mergeStringEnvs(base, extra []string) []string {
 	return out
 }
 
-func maybeAugmentRouterdServiceAccess(router *api.Router, unitName string, spec api.SystemdUnitSpec) api.SystemdUnitSpec {
-	if unitName != "routerd.service" || !routerNeedsKeepalivedAccess(router) || firstNonEmpty(spec.State, "present") == "absent" {
-		return spec
-	}
-	spec.AmbientCapabilities = appendMissingStrings(spec.AmbientCapabilities, "CAP_DAC_OVERRIDE")
-	spec.CapabilityBoundingSet = appendMissingStrings(spec.CapabilityBoundingSet, "CAP_DAC_OVERRIDE")
-	return spec
-}
-
-func routerNeedsKeepalivedAccess(router *api.Router) bool {
-	if router == nil {
-		return false
-	}
-	for _, res := range router.Spec.Resources {
-		switch {
-		case res.APIVersion == api.FirewallAPIVersion && res.Kind == "IngressService":
-			return true
-		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress":
-			spec, err := res.VirtualAddressSpec()
-			if err == nil && firstNonEmpty(spec.Mode, "static") == "vrrp" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func appendMissingStrings(values []string, additions ...string) []string {
-	out := append([]string(nil), values...)
-	for _, addition := range additions {
-		addition = strings.TrimSpace(addition)
-		if addition == "" {
-			continue
-		}
-		found := false
-		for _, existing := range out {
-			if existing == addition {
-				found = true
-				break
-			}
-		}
-		if !found {
-			out = append(out, addition)
-		}
-	}
-	return out
-}
-
 func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string) (bool, bool, error) {
 	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
 	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
@@ -1631,7 +1448,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	}
 	previous := c.Store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
 	if changed || !active || cleanStatusString(previous["phase"]) == "Error" {
-		if systemdUnitActive(ctx, render.RouterdUnitName) {
+		if systemdUnitActive(ctx, "routerd.service") {
 			// Once routerd is READY, use a blocking restart and verify the helper
 			// became active. A successful systemctl invocation alone does not prove
 			// that ExecStart stayed up.
@@ -1828,117 +1645,6 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 	return nil
 }
 
-func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context) error {
-	if c.DryRun {
-		return nil
-	}
-	configured := map[string]bool{}
-	for _, resource := range c.Router.Spec.Resources {
-		switch resource.Kind {
-		case "DHCPv4Client":
-			configured["routerd-dhcpv4-client@"+resource.Metadata.Name+".service"] = true
-		case "DHCPv6PrefixDelegation":
-			configured["routerd-dhcpv6-client@"+resource.Metadata.Name+".service"] = true
-		case "PPPoESession":
-			spec, err := resource.PPPoESessionSpec()
-			if err != nil {
-				return err
-			}
-			if !pppoeSessionDisabled(spec) {
-				configured["routerd-pppoe-client@"+resource.Metadata.Name+".service"] = true
-			}
-		}
-	}
-	patterns := []string{
-		"routerd-dhcpv4-client@*.service",
-		"routerd-dhcpv6-client@*.service",
-		"routerd-pppoe-client@*.service",
-	}
-	var removed bool
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(filepath.Join(c.systemdSystemDir, pattern))
-		if err != nil {
-			return err
-		}
-		for _, path := range matches {
-			unitName := filepath.Base(path)
-			active := systemdUnitActive(ctx, unitName)
-			status := map[string]any{
-				"phase":     "Removing",
-				"reason":    "StaleClientDaemonUnit",
-				"unitName":  unitName,
-				"path":      path,
-				"active":    active,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			}
-			if active && configured[unitName] {
-				status["phase"] = "Pending"
-				status["reason"] = "StaleClientDaemonUnitActive"
-				status["message"] = "stale client daemon unit is active; cleanup deferred to avoid service interruption"
-				if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
-					return err
-				}
-				if c.Bus != nil {
-					event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_cleanup_deferred", daemonapi.SeverityWarning)
-					event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
-					event.Reason = "StaleClientDaemonUnitActive"
-					event.Attributes = map[string]string{"unitName": unitName, "path": path, "active": "true"}
-					if err := c.Bus.Publish(ctx, event); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
-				return err
-			}
-			if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
-				status["phase"] = "Error"
-				status["error"] = err.Error()
-				status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); saveErr != nil {
-					return saveErr
-				}
-				if c.Bus != nil {
-					event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_cleanup_failed", daemonapi.SeverityError)
-					event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
-					event.Reason = "StaleClientDaemonUnitCleanupFailed"
-					event.Attributes = map[string]string{"unitName": unitName, "path": path, "active": fmt.Sprint(active), "error": err.Error()}
-					if publishErr := c.Bus.Publish(ctx, event); publishErr != nil {
-						return publishErr
-					}
-				}
-				return fmt.Errorf("disable stale client daemon unit %s: %w", unitName, err)
-			}
-			_, _ = runOutputCommandContext(ctx, "systemctl", "reset-failed", unitName)
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			status["phase"] = "Removed"
-			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
-				return err
-			}
-			if c.Bus != nil {
-				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.stale_removed", daemonapi.SeverityInfo)
-				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
-				event.Reason = "StaleClientDaemonUnit"
-				event.Attributes = map[string]string{"unitName": unitName, "path": path, "active": fmt.Sprint(active)}
-				if err := c.Bus.Publish(ctx, event); err != nil {
-					return err
-				}
-			}
-			removed = true
-		}
-	}
-	if removed {
-		if _, err := runOutputCommandContext(ctx, "systemctl", "daemon-reload"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func systemdUnitActive(ctx context.Context, unitName string) bool {
 	_, err := runOutputCommandContext(ctx, "systemctl", "is-active", "--quiet", unitName)
 	return err == nil
@@ -2021,25 +1727,12 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 				return changed, err
 			}
 		}
-	} else if systemdUnitEnabledOrActive(ctx, unitName) {
-		if _, err := runOutputCommandContext(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+	} else if systemdUnitEnabled(ctx, unitName) {
+		if _, err := runOutputCommandContext(ctx, "systemctl", "disable", unitName); err != nil {
 			return changed, err
 		}
 	}
 	if api.BoolDefault(spec.Started, true) {
-		if unitName == "routerd.service" && fileChanged {
-			if err := scheduleRouterdServiceRestart(ctx); err != nil {
-				return changed, err
-			}
-			return true, nil
-		}
-		// Reaching this controller proves that routerd.service is already
-		// running. With Type=notify, systemd reports it as "activating" until
-		// bootstrap completes, so `systemctl is-active` would return false and
-		// a direct self-restart here would prevent READY from ever being sent.
-		if unitName == "routerd.service" {
-			return changed, nil
-		}
 		active := true
 		if !fileChanged {
 			if _, err := runOutputCommandContext(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
@@ -2147,22 +1840,6 @@ func systemdUnitEnabledOrActive(ctx context.Context, unitName string) bool {
 func systemdUnitEnabled(ctx context.Context, unitName string) bool {
 	_, err := runOutputCommandContext(ctx, "systemctl", "is-enabled", "--quiet", unitName)
 	return err == nil
-}
-
-func scheduleRouterdServiceRestart(ctx context.Context) error {
-	unitName := fmt.Sprintf("routerd-self-restart-%d-%d.service", os.Getpid(), time.Now().UnixNano())
-	_, err := runOutputCommandContext(ctx,
-		"systemd-run",
-		"--unit", unitName,
-		"--description", "Restart routerd after managed unit update",
-		"--on-active=10s",
-		"--collect",
-		"systemctl", "restart", "routerd.service",
-	)
-	if err != nil {
-		return fmt.Errorf("schedule routerd.service restart through systemd-run: %w", err)
-	}
-	return nil
 }
 
 func networkdNetworkFile(ctx context.Context, ifname string) (string, error) {

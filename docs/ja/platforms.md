@@ -39,10 +39,13 @@ Ubuntu でも、パッケージが事前に導入されていることは前提�
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS 制御 | `procps`, `systemd`, `kmod` |
 
-Linux では、長時間稼働する `routerd serve` が `routerd-dhcpv6-client`、
-`routerd-dhcpv4-client`、`routerd-pppoe-client` を直接監視して起動します。
-旧来のリソース単位の systemd ユニットを併用しないでください。
-`routerd-healthcheck` は引き続き管理対象の systemd サービスとして動作します。
+`routerd.service` の所有者は Debian パッケージだけです。`contrib/systemd/routerd.service` をそのまま収録し、本体は capability の上限指定なしで root として動作します。本体が自身の unit を書き換えたり再起動したりする処理はありません。`routerd render systemd-service` は廃止しました。Live ISO の起動順は `routerd.service.d/10-live-setup.conf` に残します。
+
+DHCPv4、DHCPv6-PD、PPPoE、RA と mobility の ARP observer は、BGP・DNS 補助デーモンと同様に、リソース単位のサービスで管理します。routerd は `When` と HA の役割条件を確認してサービス操作で起動・停止し、クライアントを単独ではブート時に自動起動しません。外部 DHCPv6-PD クライアントを指定した場合、内蔵クライアントは起動しません。クライアント unit は `routerd.service` への `BindsTo`・`PartOf`・`Requires` 依存を持たず、本体を再起動しても停止しません。FreeBSD は Runner 内のプロセス監視ではなく、既存の rc.d 生成処理と OS のサービス操作を使います。
+
+パッケージは `routerd.slice` を収録し、固定の本体 unit と生成する全 routerd サービスを所属させます。パッケージ削除時は `routerd.service` と `routerd.slice` を停止し、マーカー付き生成 unit とそのファイルを指すリンクだけを削除します。オフライン削除も同じです。運用・ISO の drop-in、設定、DB、鍵は保持します。更新時は旧 `/etc/systemd/system/routerd.service` だけを削除してから systemd を再読込し、drop-in ディレクトリは削除しません。
+
+dnsmasq が DHCP を管理するときは `routerd-dhcp-fingerprint-watcher.service` を起動します。watcher は `--journal-unit routerd-dnsmasq.service` でログを読み、WebConsole と同じ `--db /var/lib/routerd/dhcp-fingerprints.db` に記録します。停止・再起動は dnsmasq に連動します。lease ファイルや ARP を入力する flag はなく、収集には DHCP の `logDHCP: true` が必要です。
 
 Ubuntu 26.04 LTS（`resolute`）は、managed dnsmasq、nftables、DHCPv6-PD、
 委任された LAN IPv6 アドレス、control API について、Ubuntu 24.04 と同じ Linux

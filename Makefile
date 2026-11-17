@@ -238,7 +238,7 @@ dist:
 		install -m 0555 contrib/freebsd/routerd $(DISTROOT)/rc.d/routerd; \
 	else \
 		install -d $(DISTROOT)/systemd; \
-		install -m 0644 contrib/systemd/routerd.service $(DISTROOT)/systemd/; \
+		install -m 0644 contrib/systemd/routerd.service contrib/systemd/routerd.slice $(DISTROOT)/systemd/; \
 	fi
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .

@@ -23,16 +23,6 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func TestApplyChainControllerOptionsSkipLegacyClientUnits(t *testing.T) {
-	opts := applyChainControllerOptions(applyOptions{})
-	if !opts.SkipLegacyClientUnits {
-		t.Fatal("one-shot apply must not synthesize legacy DHCP client service units")
-	}
-	if opts.SuperviseClientDaemons {
-		t.Fatal("one-shot apply must leave client daemon supervision to long-running routerd")
-	}
-}
-
 func TestRouterWithDryRunLeaseFilesKeepsDHCPLeaseStateInArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

@@ -22,7 +22,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	routerdSpec := RouterdServiceInitSpec()
+	routerdSpec := api.SystemdUnitSpec{Description: "routerd daemon", ExecStart: []string{"/usr/local/sbin/routerd", "serve"}}
 	routerdData, err := FreeBSDRCDScript("routerd", routerdSpec)
 	if err != nil {
 		return nil, err
@@ -60,56 +60,9 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 			out[name] = data
 		}
 	}
-	synthesizeClientDaemons := !freeBSDRouterdSupervisesClientDaemons(router)
 	aliases, err := nftOutboundAliases(router)
 	if err != nil {
 		return nil, err
-	}
-	if synthesizeClientDaemons {
-		for _, res := range router.Spec.Resources {
-			if res.Kind != "DHCPv6PrefixDelegation" {
-				continue
-			}
-			spec, err := res.DHCPv6PrefixDelegationSpec()
-			if err != nil {
-				return nil, err
-			}
-			ifname := aliases[spec.Interface]
-			if ifname == "" {
-				return nil, fmt.Errorf("%s references interface %q with no ifname", res.ID(), spec.Interface)
-			}
-			name := freeBSDServiceName("routerd-dhcpv6-client@" + res.Metadata.Name + ".service")
-			if explicit[name] {
-				continue
-			}
-			data, err := FreeBSDRCDScript(name, freeBSDDHCPv6ClientSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv))
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", res.ID(), err)
-			}
-			out[name] = data
-		}
-		for _, res := range router.Spec.Resources {
-			if res.Kind != "DHCPv4Client" {
-				continue
-			}
-			spec, err := res.DHCPv4ClientSpec()
-			if err != nil {
-				return nil, err
-			}
-			ifname := aliases[spec.Interface]
-			if ifname == "" {
-				return nil, fmt.Errorf("%s references interface %q with no ifname", res.ID(), spec.Interface)
-			}
-			name := freeBSDServiceName("routerd-dhcpv4-client@" + res.Metadata.Name + ".service")
-			if explicit[name] {
-				continue
-			}
-			data, err := FreeBSDRCDScript(name, freeBSDDHCPv4ClientSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv))
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", res.ID(), err)
-			}
-			out[name] = data
-		}
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "HealthCheck" {
@@ -487,10 +440,6 @@ func carpIfconfigAddressToken(iface CARPInterface) string {
 	return "inet " + address + " "
 }
 
-func freeBSDRouterdSupervisesClientDaemons(router *api.Router) bool {
-	return true
-}
-
 func wireGuardPeerSpecs(router *api.Router, ifname string) []api.WireGuardPeerSpec {
 	var peers []api.WireGuardPeerSpec
 	for _, res := range router.Spec.Resources {
@@ -634,77 +583,6 @@ func safeWireGuardKeyFilePart(value string) string {
 	return value
 }
 
-func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {
-	args := []string{
-		"/usr/local/sbin/routerd-dhcpv6-client",
-		"--resource", resource,
-		"--interface", ifname,
-		"--socket", "/var/run/routerd/dhcpv6-client/" + resource + ".sock",
-		"--lease-file", "/var/db/routerd/dhcpv6-client/" + resource + "/lease.json",
-		"--event-file", "/var/db/routerd/dhcpv6-client/" + resource + "/events.jsonl",
-	}
-	if spec.IAID != "" {
-		args = append(args, "--iaid", spec.IAID)
-	}
-	if spec.ClientDUID != "" {
-		args = append(args, "--client-duid", spec.ClientDUID)
-	}
-	noNewPrivileges := true
-	return api.SystemdUnitSpec{
-		Description:              "routerd DHCPv6-PD client " + resource,
-		ExecStart:                args,
-		Environment:              telemetryEnv,
-		Wants:                    []string{"NETWORKING"},
-		After:                    []string{"NETWORKING"},
-		Restart:                  "always",
-		RestartSec:               "5s",
-		RuntimeDirectory:         []string{"routerd", "routerd/dhcpv6-client"},
-		RuntimeDirectoryPreserve: "yes",
-		StateDirectory:           []string{"routerd", "routerd/dhcpv6-client", "routerd/dhcpv6-client/" + resource},
-		LogsDirectory:            []string{"routerd"},
-		NoNewPrivileges:          &noNewPrivileges,
-	}
-}
-
-func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4ClientSpec, telemetryEnv []string) api.SystemdUnitSpec {
-	args := []string{
-		"/usr/local/sbin/routerd-dhcpv4-client",
-		"daemon",
-		"--resource", resource,
-		"--interface", ifname,
-		"--socket", "/var/run/routerd/dhcpv4-client/" + resource + ".sock",
-		"--lease-file", "/var/db/routerd/dhcpv4-client/" + resource + "/lease.json",
-		"--event-file", "/var/db/routerd/dhcpv4-client/" + resource + "/events.jsonl",
-	}
-	if spec.Hostname != "" {
-		args = append(args, "--hostname", spec.Hostname)
-	}
-	if spec.RequestedAddress != "" {
-		args = append(args, "--requested-address", spec.RequestedAddress)
-	}
-	if spec.ClassID != "" {
-		args = append(args, "--class-id", spec.ClassID)
-	}
-	if spec.ClientID != "" {
-		args = append(args, "--client-id", spec.ClientID)
-	}
-	noNewPrivileges := true
-	return api.SystemdUnitSpec{
-		Description:              "routerd DHCPv4 client " + resource,
-		ExecStart:                args,
-		Environment:              telemetryEnv,
-		Wants:                    []string{"NETWORKING"},
-		After:                    []string{"NETWORKING"},
-		Restart:                  "always",
-		RestartSec:               "5s",
-		RuntimeDirectory:         []string{"routerd", "routerd/dhcpv4-client"},
-		RuntimeDirectoryPreserve: "yes",
-		StateDirectory:           []string{"routerd", "routerd/dhcpv4-client", "routerd/dhcpv4-client/" + resource},
-		LogsDirectory:            []string{"routerd"},
-		NoNewPrivileges:          &noNewPrivileges,
-	}
-}
-
 func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
@@ -741,7 +619,7 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	name = freeBSDServiceName(name)
 	execStartPre := spec.ExecStartPre
 	var buf bytes.Buffer
-	buf.WriteString("#!/bin/sh\n")
+	buf.WriteString("#!/bin/sh\n# routerd-managed-service: v1\n")
 	buf.WriteString("#\n")
 	buf.WriteString("# Managed by routerd.\n")
 	buf.WriteString("#\n")

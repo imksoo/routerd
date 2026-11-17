@@ -110,7 +110,7 @@ DHCPv6PrefixDelegationのプレフィックスからローカルIPv6アドレス
 
 [PPPoESession](resources/PPPoESession.md)
 
-Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientを監視実行し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。
+Linuxのpppd・FreeBSDのmpd5を使うrouterd-pppoe-clientをサービスとして起動し、交渉したIPv4セッション状態を公開します。一部の旧項目はFreeBSDの手動render出力だけに使われ、主デーモン経路には効きません。
 
 ## VPN・トンネル
 

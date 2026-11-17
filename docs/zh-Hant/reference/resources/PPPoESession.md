@@ -4,12 +4,12 @@
 
 `apiVersion: net.routerd.net/v1alpha1` · `metadata.name`
 
-監督執行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，並公開協商的 IPv4 工作階段狀態。部分舊欄位僅影響手動 FreeBSD render 輸出，不影響此精靈路徑。
+以服務執行 routerd-pppoe-client，在 Linux 使用 pppd、FreeBSD 使用 mpd5，並公開協商的 IPv4 工作階段狀態。部分舊欄位僅影響手動 FreeBSD render 輸出，不影響此精靈路徑。
 
 ## 指定條件與參照關係
 
 - interface 必須參照同一 Router 的基本 Interface，不可使用 PPPoESession、隧道等作為底層介面。即使 enabled:false，仍需 username 及 password/passwordFile 其中一項。
-- 實際監督流程傳入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不傳入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。請勿由另一條手動 FreeBSD render 路徑推定實際行為。
+- 服務產生流程傳入 authMethod、mtu/mru、serviceName/acName、lcpEchoInterval/lcpEchoFailure，不傳入 ifname、managed、persist、ipv6、usePeerDNS、lcpInterval/lcpFailure。請勿由另一條手動 FreeBSD render 路徑推定實際行為。
 - 主精靈在兩個平台預設 MTU/MRU 1454、LCP echo 30 秒/4 次。獨立的手動 FreeBSD mpd5 產生路徑預設 1492、舊 LCP 20 秒/3 次。設定計畫或 Connected 不代表上游實際可達。
 
 ## 設定語法

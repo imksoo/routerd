@@ -9,6 +9,7 @@
 ## 指定條件與參照關係
 
 - 產生的遙測環境只可選一個Telemetry或OTLP endpoint非空的ObservabilityPipeline；同時選到多個會產生錯誤，不透過資源名稱互相參照。
+- serve 啟動時僅由設定補入未設定的 OpenTelemetry 環境變數，明確值（含空值）優先。主程序 Telemetry 變更須重新啟動 routerd.service；routerd 不會自行重新啟動。
 
 ## 設定語法
 

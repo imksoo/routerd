@@ -97,8 +97,8 @@ to edit the YAML, not to try a live apply.
 
 When the preview names the expected interfaces and artifacts, use a console or
 separate management path to install the reviewed configuration and start the
-service. The service applies the configuration and supervises DHCP and other
-client processes:
+service. The service applies the configuration and manages DHCP and other
+client service units:
 
 ```bash
 sudo install -d -m 0755 /usr/local/etc/routerd
@@ -107,7 +107,8 @@ sudo systemctl start routerd.service
 sudo systemctl is-active routerd.service
 ```
 
-A standalone `routerd apply --once` exits without supervising those clients.
+A standalone `routerd apply --once` reconciles client units, then exits without
+serving the control API or following future condition changes.
 For a DHCP handoff, verify the lease and management connection after starting
 the service; the change is not guaranteed to be interruption-free.
 

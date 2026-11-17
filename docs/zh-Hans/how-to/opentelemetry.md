@@ -127,6 +127,8 @@ otelcol-contrib --config /tmp/otel-test.yaml
 
 使用 `Telemetry` 可以在路由器的 YAML 中指定 OTLP 端点。routerd 会将对应的 OpenTelemetry 环境变量注入至生成的 systemd 及 FreeBSD rc.d unit 中。收集器需在外部另行准备，routerd 只负责配置导出器。
 
+`serve` 启动时读取配置，在 OpenTelemetry 初始化前仅补充 `os.LookupEnv` 判定为未设置的环境变量，保留显式空值。主进程的 `Telemetry` 变更需要运维人员重启 `routerd.service`；routerd 不会自行重启。生成的辅助服务仍接收 Telemetry 环境变量。
+
 ```yaml
 apiVersion: observability.routerd.net/v1alpha1
 kind: Telemetry

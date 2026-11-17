@@ -130,6 +130,8 @@ drop-in に `RestrictAddressFamilies` が残っていないか確認し、その
 
 `Telemetry` を使うと、OTLP エンドポイントを router の YAML に書けます。routerd は、対応する OpenTelemetry 環境変数を、生成済みの systemd、FreeBSD rc.d の unit に入れます。コレクターは外部で用意します。routerd はエクスポーターの設定だけを準備します。
 
+`serve` の起動時に設定を読み、OpenTelemetry の初期化前に `os.LookupEnv` で未設定と判定した環境変数だけを補います。明示された空文字も上書きしません。本体の `Telemetry` 変更を反映するには、運用者が `routerd.service` を再起動してください。本体は自身を再起動しません。生成する補助サービスには引き続き Telemetry の環境変数を設定します。
+
 ```yaml
 apiVersion: observability.routerd.net/v1alpha1
 kind: Telemetry

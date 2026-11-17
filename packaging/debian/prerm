@@ -1,15 +1,5 @@
 #!/bin/sh
 set -e
-# Stop routerd and every helper unit before the files are replaced, so the next
-# version starts from its own files only. Skip not-found units left in memory.
-# Removal also disables the loaded units.
 if [ -d /run/systemd/system ]; then
-    systemctl stop routerd.service
-    units=$(systemctl list-units --all --state=loaded --type=service --plain --no-legend 'routerd*.service' | awk '{print $1}')
-    for unit in $units; do
-        systemctl stop "$unit"
-        if [ "$1" = remove ]; then
-            systemctl disable "$unit"
-        fi
-    done
+    systemctl stop routerd.service routerd.slice
 fi

@@ -37,7 +37,13 @@ routerd 在 Linux 上使用的 OS 功能如下。
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS 控制 | `procps`, `systemd`, `kmod` |
 
-`routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` 在 Linux 上以 systemd 服务运行。
+`routerd.service` 仅由 Debian 软件包拥有，直接收录 `contrib/systemd/routerd.service`。主进程以 root 运行，不设置 capability 上限，也不改写或重启自身的单元。已移除 `routerd render systemd-service`。Live ISO 的启动顺序保留在 `routerd.service.d/10-live-setup.conf`。
+
+DHCPv4、DHCPv6-PD、PPPoE、RA 与 mobility ARP observer 和 BGP、DNS 辅助进程一样，使用每个资源独立的服务。routerd 解析 `When` 与 HA 角色条件后，通过服务管理器启动或停止客户端，不让客户端在开机时独立自动启动。选择外部 DHCPv6-PD 客户端不会启动内置客户端。客户端单元没有对 `routerd.service` 的 `BindsTo`、`PartOf`、`Requires` 依赖，因此重启主进程不会停止它们。FreeBSD 使用现有 rc.d 生成器和原生服务操作，不再使用 Runner 进程监督。
+
+软件包提供 `routerd.slice`，固定主单元和所有生成的 routerd 服务都属于该 slice。卸载时仅停止 `routerd.service` 和 `routerd.slice`，然后删除带生成标记的单元文件及指向它们的链接，离线卸载也适用。保留运维与 ISO drop-in、配置、数据库及密钥。更新时仅删除旧 `/etc/systemd/system/routerd.service` 后重新加载 systemd，不删除其 drop-in 目录。
+
+dnsmasq 管理 DHCP 时启动 `routerd-dhcp-fingerprint-watcher.service`。watcher 使用 `--journal-unit routerd-dnsmasq.service` 读取日志，写入与 Web Console 相同的 `--db /var/lib/routerd/dhcp-fingerprints.db`。停止及重启随 dnsmasq 联动。它没有租约文件或 ARP 输入参数；采集需要 DHCP 的 `logDHCP: true`。
 
 Ubuntu 26.04 LTS（`resolute`）已针对受管理的 dnsmasq、nftables、DHCPv6-PD、
 委派的 LAN IPv6 地址、控制 API，使用与 Ubuntu 24.04 相同的 Linux

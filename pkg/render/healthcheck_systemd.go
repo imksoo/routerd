@@ -92,7 +92,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 		"--event-file", logRoot+"/routerd/healthcheck/"+resource+"/events.jsonl",
 	)
 	noNewPrivileges := true
-	capabilities := healthCheckCapabilities(spec.FwMark)
+	capabilities := healthCheckCapabilities()
 	return api.SystemdUnitSpec{
 		Description:              "routerd healthcheck " + resource,
 		ExecStart:                execStart,
@@ -117,11 +117,8 @@ func boolValuePtr(value bool) *bool {
 	return &value
 }
 
-func healthCheckCapabilities(fwmark int) []string {
-	if fwmark != 0 {
-		return []string{"CAP_NET_ADMIN", "CAP_NET_RAW"}
-	}
-	return []string{"CAP_NET_RAW"}
+func healthCheckCapabilities() []string {
+	return []string{"CAP_NET_ADMIN", "CAP_NET_RAW"}
 }
 
 func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
@@ -180,14 +177,16 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 		args += " --event-file " + strconv.Quote(options.EventFile)
 	}
 
-	capabilities := strings.Join(healthCheckCapabilities(options.FwMark), " ")
-	return []byte(fmt.Sprintf(`[Unit]
+	capabilities := strings.Join(healthCheckCapabilities(), " ")
+	return []byte(fmt.Sprintf(`# routerd-managed-service: v1
+[Unit]
 Description=routerd healthcheck %s
 BindsTo=routerd.service
 After=routerd.service network-online.target
 Wants=network-online.target
 
 [Service]
+Slice=routerd.slice
 Type=simple
 %s
 ExecStart=%s %s

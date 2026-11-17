@@ -40,10 +40,13 @@ The reference list:
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS control | `procps`, `systemd`, `kmod` |
 
-Long-running `routerd serve` directly supervises `routerd-dhcpv6-client`,
-`routerd-dhcpv4-client`, and `routerd-pppoe-client` on Linux. Do not run the
-legacy per-resource systemd units alongside it. `routerd-healthcheck` remains a
-managed systemd service.
+The Debian package alone owns `routerd.service`, copied unchanged from `contrib/systemd/routerd.service`. The daemon runs as root without a capability bounding list and never rewrites or restarts its own unit. `routerd render systemd-service` has been removed. Live ISO boot ordering stays in `routerd.service.d/10-live-setup.conf`.
+
+DHCPv4, DHCPv6-PD, PPPoE, RA and mobility ARP observers use generated per-resource services, like BGP and DNS helpers. routerd starts and stops clients through the service manager after resolving `When` and HA role conditions; clients are not enabled independently at boot. Selecting an external DHCPv6-PD client does not start the built-in client. Client units have no `BindsTo`, `PartOf` or `Requires` dependency on `routerd.service`, so restarting routerd does not stop them. FreeBSD uses the existing rc.d renderer and native service operations instead of a Runner process supervisor.
+
+The package supplies `routerd.slice`; the fixed daemon unit and all generated routerd services belong to it. Package removal stops `routerd.service` and `routerd.slice`, then removes only marker-bearing generated unit files and links resolving to them, including offline removal. Operational/ISO drop-ins, configuration, databases and keys remain. Upgrades remove the old `/etc/systemd/system/routerd.service` override before reloading systemd, without deleting its drop-in directory.
+
+When dnsmasq manages DHCP, it starts `routerd-dhcp-fingerprint-watcher.service`. The watcher follows the dnsmasq journal with `--journal-unit routerd-dnsmasq.service` and writes `--db /var/lib/routerd/dhcp-fingerprints.db`, which Web Console reads. Its stop/restart follows dnsmasq. It has no lease-file or ARP input flags; fingerprint collection needs DHCP `logDHCP: true`.
 
 Ubuntu 26.04 LTS (`resolute`) has been validated with the same Linux data-plane
 renderers used by Ubuntu 24.04 for managed dnsmasq, nftables, DHCPv6-PD,

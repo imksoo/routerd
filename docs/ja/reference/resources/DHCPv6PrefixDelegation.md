@@ -8,8 +8,8 @@
 
 ## 指定条件と参照関係
 
-- interfaceは既存論理インターフェース名が必要です。既定clientはrouterd-dhcpv6-clientです。networkd・dhcp6c・dhcpcdも認識してOS別設定を生成しますが、実行時の監督・状態ソケットはrouterdデーモン中心で、同等のライフサイクル対応とは限りません。
-- profile・prefixLengthは外部クライアント設定生成と復元スナップショットの整合確認に使います。監督起動するrouterd-dhcpv6-clientにはprofile・prefix-length引数を渡さず、その取得処理で長さ要求には使いません。clientDUIDは渡します。
+- interfaceは既存論理インターフェース名が必要です。既定clientはrouterd-dhcpv6-clientです。networkd・dhcp6c・dhcpcdも認識してOS別設定を生成しますが、サービス管理・状態ソケットはrouterdデーモン中心で、同等のライフサイクル対応とは限りません。
+- profile・prefixLengthは外部クライアント設定生成と復元スナップショットの整合確認に使います。サービス起動するrouterd-dhcpv6-clientにはprofile・prefix-length引数を渡さず、その取得処理で長さ要求には使いません。clientDUIDは渡します。
 - iaid・duidTypeのYAML指定は対応しません。routerdデーモンのIA_PD IAIDは既定1で、clientDUIDがなければ上流MACからDUID-LLを生成します。requiredは起動待ちの強制にはなりません。
 
 ## 設定構文
@@ -52,7 +52,7 @@
 | YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
 | --- | --- | --- | --- |
 | `spec.interface` | **必須** | string | 同じRouterの論理上流インターフェースが必須です。同じインターフェースにDHCPv6Addressもある場合、外部dhcp6c・dhcpcdのPD clientはそちらのclientと一致が必要です。 |
-| `spec.client` | *任意* | string | 既定routerd-dhcpv6-clientで、代替はnetworkd・dhcp6c・dhcpcdです。現行の監督処理はrouterd DHCPv6のsystemdユニットも合成するため、外部指定だけで内蔵デーモンの停止を一般には保証しません。 |
+| `spec.client` | *任意* | string | 既定はrouterd-dhcpv6-clientで、代替はnetworkd・dhcp6c・dhcpcdです。内蔵クライアントを選択した場合だけリソース単位のrouterdクライアントサービスを生成し、外部クライアントはOS別の設定経路を使います。 |
 | `spec.profile` | *任意* | string; enum=["default", "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd"] | 空・default・ntt-ngn-direct-hikari-denwa・ntt-hgw-lan-pdです。NTTは対応する生成経路に/60とlink-layer DUID既定を補いますが、認証情報設定や内蔵デーモン引数変更は行いません。 |
 | `spec.prefixLength` | *任意* | integer; minimum=1; maximum=128 | 任意の1～128です。省略・0はNTTで/60、defaultでは長さ指定なしです。割当長を保証せず内蔵取得にも渡しません。一方、HA事前配置の復元は有効長との完全一致が必要で、defaultかつ省略時は0比較となり通常の委任プレフィックスと一致しません。この経路には実際の長さを明示してください。 |
 | `spec.clientDUID` | *任意* | string | 区切りなし・偶数桁16進数の任意DUIDです。コロン・空白は拒否し、空なら内蔵クライアントがMAC由来DUID-LLを生成します。IDは復元リースの再利用条件にも影響します。 |
