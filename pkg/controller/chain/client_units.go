@@ -26,11 +26,12 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, t
 	}
 
 	desired := map[string]bool{}
-	// Do not start a conditional WAN client until this generation has observed
-	// its role. In particular a persisted VRRP role cannot authorize takeover.
-	router := resourcequery.FilterRouterByResolvedWhen(c.Router, c.Store)
+	// Keep indeterminate clients untouched, but only start or update clients
+	// whose condition is true in this generation.
+	router := resourcequery.FilterRouterByWhen(c.Router, c.Store)
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range router.Spec.Resources {
+		start := resourcequery.ResourceWhenMatches(resourcequery.ResourceWhen(resource), c.Store)
 		var unit api.SystemdUnitSpec
 		var unitName string
 		var ifname string
@@ -42,7 +43,9 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, t
 			}
 			unitName = "routerd-dhcpv4-client@" + resource.Metadata.Name + ".service"
 			ifname = aliases[spec.Interface]
-			unit = dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)
+			if start {
+				unit = dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)
+			}
 		case "DHCPv6PrefixDelegation":
 			spec, err := resource.DHCPv6PrefixDelegationSpec()
 			if err != nil {
@@ -53,7 +56,9 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, t
 			}
 			unitName = "routerd-dhcpv6-client@" + resource.Metadata.Name + ".service"
 			ifname = aliases[spec.Interface]
-			unit = dhcpv6ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)
+			if start {
+				unit = dhcpv6ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)
+			}
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
 			if err != nil {
@@ -64,7 +69,9 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, t
 			}
 			unitName = "routerd-pppoe-client@" + resource.Metadata.Name + ".service"
 			ifname = aliases[spec.Interface]
-			unit = render.PPPoEClientSystemdSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)
+			if start {
+				unit = render.PPPoEClientSystemdSpec(resource.Metadata.Name, ifname, spec, telemetryEnv)
+			}
 		case "IPv6RouterAdvertisement":
 			spec, err := resource.IPv6RouterAdvertisementSpec()
 			if err != nil {
@@ -72,14 +79,19 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, t
 			}
 			unitName = "routerd-ra-observer@" + resource.Metadata.Name + ".service"
 			ifname = firstNonEmpty(aliases[spec.Interface], spec.Interface)
-			unit = raObserverUnitSpec(resource.Metadata.Name, ifname, telemetryEnv)
+			if start {
+				unit = raObserverUnitSpec(resource.Metadata.Name, ifname, telemetryEnv)
+			}
 		default:
+			continue
+		}
+		desired[unitName] = true
+		if !start {
 			continue
 		}
 		if ifname == "" {
 			return fmt.Errorf("%s references an interface with no ifname", resource.ID())
 		}
-		desired[unitName] = true
 		if err := c.reconcileClientDaemonUnit(ctx, resource.Kind, resource.Metadata.Name, unitName, unit); err != nil {
 			return err
 		}

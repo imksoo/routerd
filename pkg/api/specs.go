@@ -261,6 +261,8 @@ type NetworkAdoptionResolvedSpec struct {
 }
 
 type SystemdUnitSpec struct {
+	// BindsTo is internal to generated helpers, not a configuration field.
+	BindsTo                  []string `yaml:"-" json:"-"`
 	State                    string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
 	UnitName                 string   `yaml:"unitName,omitempty" json:"unitName,omitempty"`
 	Description              string   `yaml:"description,omitempty" json:"description,omitempty"`

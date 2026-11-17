@@ -64,6 +64,6 @@ state以AND組合所有項目；all以AND、any以OR組合子條件。資源狀�
 | for | 選填Go duration，要求觀測狀態經過時間至少達到此值。這不是整個條件的獨立計時器；會驗證語法，但不強制正值。 |
 | maxAge | 選填正的Go duration，要求狀態經過時間不超過此值。與for併用時兩項限制皆須成立。 |
 
-同一狀態的多個比較條件必須全部成立。未解析的unknown可能屬於未確定，而非單純false；部分有效設定路徑會保留未確定資源，僅選擇確定結果的路徑則不會。VXLANTunnel拒絕明確接受unknown的條件。等待與撤回行為請見各資源說明。
+同一狀態的多個比較條件必須全部成立。未解析的unknown可能屬於未確定，而非單純false；有效設定篩選會保留未確定資源。用戶端守護程序僅在條件為 true 時啟動或更新；未確定時不更動現有單元。VXLANTunnel拒絕明確接受unknown的條件。等待與撤回行為請見各資源說明。
 
 實作：[參照驗證](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go)、[條件驗證](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)、[值與相依讀取](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go)、[條件評估](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go)、[提供欄位](https://github.com/imksoo/routerd/blob/main/pkg/api/provides.go)。

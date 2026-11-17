@@ -56,6 +56,7 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if len(wants) > 0 {
 		b.WriteString("Wants=" + strings.Join(wants, " ") + "\n")
 	}
+	writeSpaceList(&b, "BindsTo", spec.BindsTo)
 	if len(spec.Conflicts) > 0 {
 		b.WriteString("Conflicts=" + strings.Join(spec.Conflicts, " ") + "\n")
 	}

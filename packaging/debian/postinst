@@ -1,7 +1,9 @@
 #!/bin/sh
 set -e
 if [ "$1" = configure ]; then
-    rm -f /etc/systemd/system/routerd.service
+    if grep -qx '# routerd-managed-service: v1' /etc/systemd/system/routerd.service 2>/dev/null; then
+        rm -f /etc/systemd/system/routerd.service
+    fi
     getent group routerd >/dev/null || groupadd --system routerd
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload

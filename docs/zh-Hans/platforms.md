@@ -39,9 +39,9 @@ routerd 在 Linux 上使用的 OS 功能如下。
 
 `routerd.service` 仅由 Debian 软件包拥有，直接收录 `contrib/systemd/routerd.service`。主进程以 root 运行，不设置 capability 上限，也不改写或重启自身的单元。已移除 `routerd render systemd-service`。Live ISO 的启动顺序保留在 `routerd.service.d/10-live-setup.conf`。
 
-DHCPv4、DHCPv6-PD、PPPoE、RA 与 mobility ARP observer 和 BGP、DNS 辅助进程一样，使用每个资源独立的服务。routerd 解析 `When` 与 HA 角色条件后，通过服务管理器启动或停止客户端，不让客户端在开机时独立自动启动。选择外部 DHCPv6-PD 客户端不会启动内置客户端。客户端单元没有对 `routerd.service` 的 `BindsTo`、`PartOf`、`Requires` 依赖，因此重启主进程不会停止它们。FreeBSD 使用现有 rc.d 生成器和原生服务操作，不再使用 Runner 进程监督。
+DHCPv4、DHCPv6-PD、PPPoE、RA 与 mobility ARP observer 和 BGP、DNS 辅助进程一样，使用每个资源独立的服务。routerd 解析 `When` 与 HA 角色条件后，通过服务管理器启动或停止客户端，不让客户端在开机时独立自动启动。选择外部 DHCPv6-PD 客户端不会启动内置客户端。客户端单元没有对 `routerd.service` 的 `BindsTo`、`PartOf`、`Requires` 依赖，因此重启主进程不会停止它们。FreeBSD 使用现有 rc.d 生成器和原生服务操作，不再使用 Runner 进程监督。客户端资源的 `When` 为 true 时才启动或更新；条件未确定时保留现有单元，不启动、停止或改写。条件为 false 或从配置删除时移除单元。禁用 PPPoE、选择外部 DHCPv6-PD 客户端及 HA 备用节点仍会停止内置客户端。
 
-软件包提供 `routerd.slice`，固定主单元和所有生成的 routerd 服务都属于该 slice。卸载时仅停止 `routerd.service` 和 `routerd.slice`，然后删除带生成标记的单元文件及指向它们的链接，离线卸载也适用。保留运维与 ISO drop-in、配置、数据库及密钥。更新时仅删除旧 `/etc/systemd/system/routerd.service` 后重新加载 systemd，不删除其 drop-in 目录。
+软件包提供 `routerd.slice`，固定主单元和所有生成的 routerd 服务都属于该 slice。更新时维护脚本仅停止 `routerd.service` 和 `routerd.slice`。卸载时，`prerm` 还会禁用主单元，以 `grep -l` 从 `/etc/systemd/system/*.service` 中选出带有 `# routerd-managed-service: v1` 的文件，对每个单元执行 `systemctl disable --now`，再删除生成文件。启用链接由 systemctl 管理；`postrm` 仅重新加载 systemd。这些服务操作及卸载清理仅在 systemd 运行时执行。保留运维与 ISO drop-in、配置、数据库及密钥。更新时仅在 `/etc/systemd/system/routerd.service` 带有相同生成标记时删除它，保留运维人员创建的单元和 drop-in 目录。
 
 dnsmasq 管理 DHCP 时启动 `routerd-dhcp-fingerprint-watcher.service`。watcher 使用 `--journal-unit routerd-dnsmasq.service` 读取日志，写入与 Web Console 相同的 `--db /var/lib/routerd/dhcp-fingerprints.db`。停止及重启随 dnsmasq 联动。它没有租约文件或 ARP 输入参数；采集需要 DHCP 的 `logDHCP: true`。
 

@@ -64,6 +64,6 @@ stateは全項目をANDで評価し、allは子条件のAND、anyはORです。�
 | `for` | 任意のGo duration。観測した状態の経過時間が指定値以上であることを要求します。条件全体を計時する独立タイマーではありません。構文は検証しますが、ここでは正の期間を必須化しません。 |
 | `maxAge` | 任意の正のGo duration。状態の経過時間が指定値以下であることを要求します。forと併用した場合は両方の経過時間条件を満たす必要があります。 |
 
-同じ状態に複数の比較項目を指定すると、すべてを満たす必要があります。未解決のunknown値は単なるfalseではなく未確定として扱われる場合があり、実効設定の一部経路では未確定のリソースを残します。確定済みだけを選ぶ経路とは異なります。VXLANTunnelではunknownを明示的に許可する条件を拒否します。保留・撤去の具体的な動作は各リソースの説明を参照してください。
+同じ状態に複数の比較項目を指定すると、すべてを満たす必要があります。未解決のunknown値は単なるfalseではなく未確定として扱われる場合があり、実効設定のフィルターでは未確定のリソースを残します。クライアントデーモンは条件が true の場合だけ起動・更新し、未確定の間は既存ユニットに変更を加えません。VXLANTunnelではunknownを明示的に許可する条件を拒否します。保留・撤去の具体的な動作は各リソースの説明を参照してください。
 
 実装：[参照検証](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go)、[条件検証](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)、[値と依存条件の読取り](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go)、[条件評価](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go)、[提供フィールド](https://github.com/imksoo/routerd/blob/main/pkg/api/provides.go)。

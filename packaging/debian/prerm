@@ -2,4 +2,12 @@
 set -e
 if [ -d /run/systemd/system ]; then
     systemctl stop routerd.service routerd.slice
+    if [ "$1" = remove ]; then
+        systemctl disable routerd.service
+        grep -l -x '# routerd-managed-service: v1' /etc/systemd/system/*.service 2>/dev/null |
+            while IFS= read -r unit; do
+                systemctl disable --now "${unit##*/}"
+                rm -f "$unit"
+            done
+    fi
 fi

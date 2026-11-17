@@ -64,6 +64,6 @@ state以AND组合所有项；all以AND、any以OR组合子条件。资源状态�
 | for | 选填Go duration，要求观测状态经过时间至少达到此值。这不是整个条件的独立计时器；会验证语法，但不强制正值。 |
 | maxAge | 选填正的Go duration，要求状态经过时间不超过此值。与for并用时两项限制均须成立。 |
 
-同一状态的多个比较条件必须全部成立。未解析的unknown可能属于未确定，而非单纯false；部分有效配置路径会保留未确定资源，仅选择确定结果的路径则不会。VXLANTunnel拒绝显式接受unknown的条件。等待与撤回行为请见各资源说明。
+同一状态的多个比较条件必须全部成立。未解析的unknown可能属于未确定，而非单纯false；有效配置筛选会保留未确定资源。客户端守护进程仅在条件为 true 时启动或更新；未确定时不改动现有单元。VXLANTunnel拒绝显式接受unknown的条件。等待与撤回行为请见各资源说明。
 
 实现：[引用验证](https://github.com/imksoo/routerd/blob/main/pkg/config/diagnostics.go)、[条件验证](https://github.com/imksoo/routerd/blob/main/pkg/config/validate.go)、[值与依赖读取](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/resourcequery.go)、[条件求值](https://github.com/imksoo/routerd/blob/main/pkg/resourcequery/when.go)、[提供字段](https://github.com/imksoo/routerd/blob/main/pkg/api/provides.go)。

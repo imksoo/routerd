@@ -1371,27 +1371,14 @@ func mergeStringEnvs(base, extra []string) []string {
 }
 
 func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string) (bool, bool, error) {
-	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
-	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
-	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
-		Resource:             resourceName,
-		Target:               resolved.Target,
-		Protocol:             resolved.Protocol,
-		Via:                  resolved.Via,
-		FwMark:               resolved.FwMark,
-		RequireDSLiteBinding: healthcheck.ReferencesDSLiteTunnel(c.Router, resourceName),
-		SourceInterface:      resolved.SourceInterface,
-		SourceAddress:        resolved.SourceAddress,
-		Port:                 resolved.Port,
-		Interval:             resolved.Interval,
-		Timeout:              resolved.Timeout,
-		HealthyThreshold:     resolved.HealthyThreshold,
-		UnhealthyThreshold:   resolved.UnhealthyThreshold,
-		SocketPath:           socket,
-		StateFile:            filepath.Join("/var/lib/routerd/healthcheck", resourceName, "state.json"),
-		EventFile:            filepath.Join("/var/lib/routerd/healthcheck", resourceName, "events.jsonl"),
-		Environment:          telemetryEnv,
+	unit := render.HealthCheckDaemonSystemdSpec(render.HealthCheckDaemonUnitOptions{
+		Resource:    resourceName,
+		Spec:        spec,
+		Router:      c.Router,
+		Store:       c.Store,
+		Environment: telemetryEnv,
 	})
+	data := render.SystemdUnit(unitName, unit)
 	changed, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 	if err != nil {
 		return changed, false, err
