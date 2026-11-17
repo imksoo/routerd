@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+- Fix Debian package upgrades and reinstalls failing when systemd retains a non-existent routerd helper unit.
+
 ## v20261116.2323
 
 - Unify Linux installation and upgrades on Debian packages, preserving existing configuration and managing service shutdown and startup through package installation.
