@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+- Honor dynamic BGP peer conditions, resolve resource kinds and log paths consistently, and open live state read-only for diagnostics. Simplify event history, scheduled observation and package builds. Build the Web Console with esbuild.
+
 ## v20261117.0407
 
 - Unify main-unit ownership in the Debian package; replace client process supervision with service-manager operations, fix generated capabilities, start the DHCP fingerprint watcher with dnsmasq, and group routerd services in `routerd.slice`. Remove `render systemd-service`; main-daemon Telemetry updates require a restart. Preserve drop-ins and persistent data on removal.

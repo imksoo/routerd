@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+- 修正動態 BGP 對等節點的條件判斷，統一資源類型與日誌路徑的解析。診斷以唯讀方式開啟狀態資料庫。簡化事件歷史、定期觀測及封裝流程，改用 esbuild 建置 Web Console。
+
 ## v20261117.0407
 
 - 將主單元擁有權統一到 Debian 套件，以服務操作取代用戶端程序監督，固定產生單元的權限，讓 DHCP fingerprint watcher 隨 dnsmasq 執行，並將 routerd 服務歸入 `routerd.slice`。移除 `render systemd-service`；主程序 Telemetry 變更需要重新啟動。移除套件時保留 drop-in 與持久資料。

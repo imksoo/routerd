@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+- 動的BGPピアの条件判定、Kindの解決、ログの表示・保持先を修正。診断は状態DBを読み取り専用で開く。イベント履歴、定期観測、配布工程を整理し、Web Consoleのビルドをesbuildに変更。
+
 ## v20261117.0407
 
 - 本体 unit の所有者を Debian パッケージに一本化し、クライアントの自前監視をサービス操作へ置き換えました。生成 unit の権限を固定し、DHCP fingerprint watcher を dnsmasq に連動させ、routerd サービスを `routerd.slice` にまとめました。`render systemd-service` は廃止し、本体の Telemetry 変更は再起動で反映します。削除時も drop-in と永続データを保持します。
