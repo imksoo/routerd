@@ -232,7 +232,7 @@ func federationEventListCommand(args []string, stdout io.Writer) error {
 		return fmt.Errorf("unexpected federation event list argument %q", fs.Arg(0))
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.OpenReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}
@@ -294,7 +294,7 @@ func federationEventDeliveriesCommand(args []string, stdout io.Writer) error {
 			statusFilter, routerstate.DeliveryPending, routerstate.DeliveryDelivered, routerstate.DeliveryFailed)
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.OpenReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}
@@ -409,7 +409,7 @@ func federationDeliveriesSummaryCommand(args []string, stdout io.Writer) error {
 		return fmt.Errorf("unexpected federation deliveries summary argument %q", fs.Arg(0))
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.OpenReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}
@@ -507,7 +507,7 @@ func federationSubscriptionRunsCommand(args []string, stdout io.Writer) error {
 		return errors.New("--subscription is required")
 	}
 
-	store, err := routerstate.Open(*statePath)
+	store, err := routerstate.OpenReadOnlyLive(*statePath)
 	if err != nil {
 		return err
 	}

@@ -89,7 +89,8 @@ func (h Handler) enrichTrafficFlowsWithDPI(ctx context.Context, flows []logstore
 	if len(flows) == 0 {
 		return flows, nil
 	}
-	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+	path := logstore.FirewallPath(h.opts.Router, h.opts.FirewallLogPath)
+	if strings.TrimSpace(path) == "" {
 		for i := range flows {
 			applyTrafficFlowPortFallback(&flows[i])
 		}
@@ -97,7 +98,7 @@ func (h Handler) enrichTrafficFlowsWithDPI(ctx context.Context, flows []logstore
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	store, err := logstore.OpenFirewallLogReadOnly(path)
 	if os.IsNotExist(err) {
 		applyTrafficFlowListPortFallback(flows)
 		return flows, nil
@@ -189,7 +190,8 @@ func (h Handler) enrichConnectionsWithDPI(ctx context.Context, table *observe.Co
 	if table == nil || len(table.Entries) == 0 {
 		return nil
 	}
-	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+	path := logstore.FirewallPath(h.opts.Router, h.opts.FirewallLogPath)
+	if strings.TrimSpace(path) == "" {
 		for i := range table.Entries {
 			applyConnectionPortFallback(&table.Entries[i])
 		}
@@ -197,7 +199,7 @@ func (h Handler) enrichConnectionsWithDPI(ctx context.Context, table *observe.Co
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	store, err := logstore.OpenFirewallLogReadOnly(path)
 	if os.IsNotExist(err) {
 		applyConnectionTablePortFallback(table)
 		return nil

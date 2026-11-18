@@ -302,7 +302,7 @@ func (d *daemon) Run(ctx context.Context) error {
 		return err
 	}
 	_ = d.restoreState()
-	_ = d.restoreEvents()
+	d.events, d.nextCursor, _ = eventfile.Restore(d.opts.eventFile)
 	server, listener, err := d.httpServer()
 	if err != nil {
 		return err
@@ -721,29 +721,6 @@ func (d *daemon) saveStateLocked() error {
 	return os.Rename(tmp, d.opts.stateFile)
 }
 
-func (d *daemon) restoreEvents() error {
-	file, err := os.Open(d.opts.eventFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var event daemonapi.DaemonEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		d.events = append(d.events, event)
-		if id, err := strconv.ParseUint(event.Cursor, 10, 64); err == nil && id > d.nextCursor {
-			d.nextCursor = id
-		}
-	}
-	return scanner.Err()
-}
-
 func (d *daemon) publish(topic, severity, reason, message string, attrs map[string]string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -759,8 +736,8 @@ func (d *daemon) publishLocked(topic, severity, reason, message string, attrs ma
 	event.Message = message
 	event.Attributes = attrs
 	d.events = append(d.events, event)
-	if len(d.events) > 1000 {
-		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
+	if len(d.events) > eventfile.HistoryLimit {
+		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-eventfile.HistoryLimit:]...)
 	}
 	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
 }

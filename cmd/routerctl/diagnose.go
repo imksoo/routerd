@@ -182,7 +182,7 @@ func loadDiagnoseInputs(opts diagnoseOptions) (*api.Router, routerstate.Store, e
 	if err != nil {
 		return nil, nil, err
 	}
-	store, err := routerstate.Open(opts.StatePath)
+	store, err := routerstate.OpenReadOnlyLive(opts.StatePath)
 	if err != nil {
 		return nil, nil, err
 	}

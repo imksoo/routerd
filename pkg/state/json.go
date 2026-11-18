@@ -223,6 +223,14 @@ func LoadReadOnlyLive(path string) (Store, error) {
 	} else if err != nil {
 		return nil, err
 	}
+	return OpenReadOnlyLive(path)
+}
+
+// OpenReadOnlyLive opens an existing live SQLite database for inspection.
+func OpenReadOnlyLive(path string) (Store, error) {
+	if path == "" {
+		return NewJSON(), nil
+	}
 	if filepath.Ext(path) == ".json" {
 		return LoadJSON(path)
 	}

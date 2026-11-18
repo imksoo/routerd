@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -348,7 +347,9 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 	if err := d.restoreLease(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "restore DHCPv6 lease for %s: %v\n", d.opts.resource, err)
 	}
-	if err := d.restoreEvents(); err != nil {
+	var err error
+	d.events, d.nextCursor, err = eventfile.Restore(d.opts.eventFile)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "restore DHCPv6 events for %s: %v\n", d.opts.resource, err)
 	}
 	server, listener, err := d.httpServer()
@@ -516,32 +517,6 @@ func (d *dhcpv6Daemon) prepareFilesystem() error {
 	}
 	_ = os.Remove(d.opts.socketPath)
 	return nil
-}
-
-func (d *dhcpv6Daemon) restoreEvents() error {
-	file, err := os.Open(d.opts.eventFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var event daemonapi.DaemonEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		d.events = append(d.events, event)
-		if len(d.events) > 1000 {
-			d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
-		}
-		if id, err := strconv.ParseUint(event.Cursor, 10, 64); err == nil && id > d.nextCursor {
-			d.nextCursor = id
-		}
-	}
-	return scanner.Err()
 }
 
 func (d *dhcpv6Daemon) httpServer() (*http.Server, net.Listener, error) {
@@ -789,8 +764,8 @@ func (d *dhcpv6Daemon) publish(topic, severity, reason, message string, attrs ma
 	event.Message = message
 	event.Attributes = attrs
 	d.events = append(d.events, event)
-	if len(d.events) > 1000 {
-		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
+	if len(d.events) > eventfile.HistoryLimit {
+		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-eventfile.HistoryLimit:]...)
 	}
 	d.appendEventFileLocked(event)
 	d.cond.Broadcast()

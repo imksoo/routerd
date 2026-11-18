@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -199,7 +198,9 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 	if err := d.restoreLease(); err != nil {
 		fmt.Fprintf(os.Stderr, "restore DHCPv4 lease for %s: %v\n", d.opts.resource, err)
 	}
-	if err := d.restoreEvents(); err != nil {
+	var err error
+	d.events, d.nextCursor, err = eventfile.Restore(d.opts.eventFile)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "restore DHCPv4 events for %s: %v\n", d.opts.resource, err)
 	}
 	server, listener, err := d.httpServer()
@@ -630,36 +631,13 @@ func (d *dhcpv4Daemon) publish(eventType, severity, reason, message string, attr
 	d.nextCursor++
 	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
 	d.events = append(d.events, event)
-	if len(d.events) > 1000 {
-		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
+	if len(d.events) > eventfile.HistoryLimit {
+		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-eventfile.HistoryLimit:]...)
 	}
 	if err := eventfile.AppendJSONLine(d.opts.eventFile, event); err != nil {
 		fmt.Fprintf(os.Stderr, "write DHCPv4 event for %s: %v\n", d.opts.resource, err)
 	}
 	d.cond.Broadcast()
-}
-
-func (d *dhcpv4Daemon) restoreEvents() error {
-	file, err := os.Open(d.opts.eventFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var event daemonapi.DaemonEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		d.events = append(d.events, event)
-		if id, err := strconv.ParseUint(event.Cursor, 10, 64); err == nil && id > d.nextCursor {
-			d.nextCursor = id
-		}
-	}
-	return scanner.Err()
 }
 
 func (d *dhcpv4Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {

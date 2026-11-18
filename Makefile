@@ -191,8 +191,9 @@ check-build-deps:
 	done; \
 	exit $$missing
 
-dist:
-	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256 $(DISTTAR_ALIAS) $(DISTTAR_ALIAS).sha256
+.PHONY: stage-dist
+stage-dist:
+	rm -rf $(DISTROOT)
 	$(MAKE) build-daemons
 	$(MAKE) build-provider-executors
 	$(MAKE) check-linux-static
@@ -240,6 +241,8 @@ dist:
 		install -d $(DISTROOT)/systemd; \
 		install -m 0644 contrib/systemd/routerd.service contrib/systemd/routerd.slice $(DISTROOT)/systemd/; \
 	fi
+
+dist: stage-dist
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .
 	scripts/check-tar-safe-paths.sh $(DISTTAR)
@@ -248,8 +251,9 @@ dist:
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 
 # Build a Debian package from the same payload as the archive.
-deb: dist
+deb: stage-dist
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "deb requires ROUTERD_OS=linux" >&2; exit 1; fi
+	install -d $(DISTDIR)
 	packaging/debian/build.sh $(DISTROOT) $(DISTDIR)/routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(VERSION) $(DISTARCH)
 	cp $(DISTDIR)/routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb $(DISTDIR)/routerd-$(DISTPLATFORM).deb
 	cd $(DISTDIR) && sha256sum routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb > routerd_$(patsubst v%,%,$(VERSION))_$(DISTARCH).deb.sha256 && sha256sum routerd-$(DISTPLATFORM).deb > routerd-$(DISTPLATFORM).deb.sha256

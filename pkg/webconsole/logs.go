@@ -293,10 +293,11 @@ func (h Handler) queryLogList(ctx context.Context, filter logstore.DNSQueryFilte
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(h.opts.DNSQueryLogPath) == "" {
+	path := logstore.DNSQueryPath(h.opts.Router, h.opts.DNSQueryLogPath)
+	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenDNSQueryLogReadOnly(h.opts.DNSQueryLogPath)
+	store, err := logstore.OpenDNSQueryLogReadOnly(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -313,10 +314,11 @@ func (h Handler) queryLogAggregate(ctx context.Context, filter logstore.DNSQuery
 	if err := ctx.Err(); err != nil {
 		return logstore.DNSQueryAggregate{}, err
 	}
-	if strings.TrimSpace(h.opts.DNSQueryLogPath) == "" {
+	path := logstore.DNSQueryPath(h.opts.Router, h.opts.DNSQueryLogPath)
+	if strings.TrimSpace(path) == "" {
 		return logstore.DNSQueryAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
-	store, err := logstore.OpenDNSQueryLogReadOnly(h.opts.DNSQueryLogPath)
+	store, err := logstore.OpenDNSQueryLogReadOnly(path)
 	if os.IsNotExist(err) {
 		return logstore.DNSQueryAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
@@ -333,10 +335,11 @@ func (h Handler) trafficFlowList(ctx context.Context, filter logstore.TrafficFlo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
+	path := logstore.TrafficFlowPath(h.opts.Router, h.opts.TrafficFlowLogPath)
+	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -353,10 +356,11 @@ func (h Handler) trafficFlowAggregate(ctx context.Context, filter logstore.Traff
 	if err := ctx.Err(); err != nil {
 		return logstore.TrafficFlowAggregate{}, err
 	}
-	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
+	path := logstore.TrafficFlowPath(h.opts.Router, h.opts.TrafficFlowLogPath)
+	if strings.TrimSpace(path) == "" {
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
-	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(path)
 	if os.IsNotExist(err) {
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
@@ -373,10 +377,11 @@ func (h Handler) firewallLogList(ctx context.Context, filter logstore.FirewallLo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+	path := logstore.FirewallPath(h.opts.Router, h.opts.FirewallLogPath)
+	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	store, err := logstore.OpenFirewallLogReadOnly(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -393,12 +398,13 @@ func (h Handler) firewallDenyTimelineList(ctx context.Context, since time.Time, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+	path := logstore.FirewallPath(h.opts.Router, h.opts.FirewallLogPath)
+	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	store, err := logstore.OpenFirewallLogReadOnly(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -414,12 +420,13 @@ func (h Handler) conntrackTuningSummary(ctx context.Context, now time.Time, wind
 		return conntracktuning.Summary{}, err
 	}
 	inputs := conntracktuning.Inputs{Now: now, Window: window, AutoApply: autoApply}
-	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+	path := logstore.FirewallPath(h.opts.Router, h.opts.FirewallLogPath)
+	if strings.TrimSpace(path) == "" {
 		return conntracktuning.Analyze(inputs), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	store, err := logstore.OpenFirewallLogReadOnly(path)
 	if os.IsNotExist(err) {
 		return conntracktuning.Analyze(inputs), nil
 	}

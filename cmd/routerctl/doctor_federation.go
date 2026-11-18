@@ -179,19 +179,13 @@ func doctorFederationPendingCheck(label string, row routerstate.DeliverySummaryR
 func doctorFederationStaleTTLCheck(label string, row routerstate.DeliverySummaryRow) doctorCheck {
 	name := label + " stale TTL"
 	if row.StaleTTL > 0 {
-		status := doctorWarn
-		remedy := "outbox should re-push refreshed events on next tick; if this persists, check outbox interval and delivery filtering"
-		if row.StaleTTL == row.Delivered {
-			status = doctorFail
-			remedy = "all delivered events have stale TTL; outbox re-push appears broken"
-		}
 		return doctorCheck{
 			Area:   "federation",
 			Code:   checkCodeStaleTTL,
 			Name:   name,
-			Status: status,
+			Status: doctorWarn,
 			Detail: fmt.Sprintf("%d of %d delivered event(s) have stale TTL (event.expiresAt > delivery.eventExpiresAt)", row.StaleTTL, row.Delivered),
-			Remedy: remedy,
+			Remedy: "outbox should re-push refreshed events on next tick; if this persists, check outbox interval and delivery filtering",
 		}
 	}
 	return doctorCheck{Area: "federation", Code: checkCodeStaleTTL, Name: name, Status: doctorPass, Detail: "no stale TTL deliveries"}

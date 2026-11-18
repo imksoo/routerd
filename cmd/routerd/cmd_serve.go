@@ -225,7 +225,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	httpTLSClientCAFile := fs.String("http-tls-client-ca-file", "", "CA bundle for requiring and verifying HTTP ControlAPI client certificates")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
-	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
+	applyInterval := fs.Duration("apply-interval", 0, "periodic status observation interval; 0 disables scheduled observation")
 	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
 	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
@@ -638,7 +638,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(currentRouter()), filter)
+			rows, err := listDNSQueriesReadOnly(r.Context(), logstore.DNSQueryPath(currentRouter(), platformDefaults.StateDir+"/dns-queries.db"), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -650,7 +650,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			agg, err := aggregateDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(currentRouter()), filter)
+			agg, err := aggregateDNSQueriesReadOnly(r.Context(), logstore.DNSQueryPath(currentRouter(), platformDefaults.StateDir+"/dns-queries.db"), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -662,7 +662,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(currentRouter()), filter)
+			rows, err := listTrafficFlowsReadOnly(r.Context(), logstore.TrafficFlowPath(currentRouter(), platformDefaults.StateDir+"/traffic-flows.db"), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -674,7 +674,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			agg, err := aggregateTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(currentRouter()), filter)
+			agg, err := aggregateTrafficFlowsReadOnly(r.Context(), logstore.TrafficFlowPath(currentRouter(), platformDefaults.StateDir+"/traffic-flows.db"), filter)
 			if err != nil {
 				return nil, err
 			}
@@ -686,7 +686,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
-			rows, err := listFirewallLogsReadOnly(r.Context(), configuredFirewallLogPath(currentRouter()), logstore.FirewallLogFilter{Since: since, Action: req.Action, Src: req.Src, Limit: req.Limit})
+			rows, err := listFirewallLogsReadOnly(r.Context(), logstore.FirewallPath(currentRouter(), platformDefaults.FirewallLogFile()), logstore.FirewallLogFilter{Since: since, Action: req.Action, Src: req.Src, Limit: req.Limit})
 			if err != nil {
 				return nil, err
 			}
@@ -1606,46 +1606,6 @@ func listFirewallLogsReadOnly(ctx context.Context, path string, filter logstore.
 	return store.List(ctx, filter)
 }
 
-func configuredDNSQueryLogPath(router *api.Router) string {
-	fallback := platformDefaults.StateDir + "/dns-queries.db"
-	if router == nil {
-		return fallback
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "DNSResolver" {
-			continue
-		}
-		spec, err := resource.DNSResolverSpec()
-		if err != nil || !spec.QueryLog.Enabled {
-			continue
-		}
-		if strings.TrimSpace(spec.QueryLog.Path) != "" {
-			return spec.QueryLog.Path
-		}
-	}
-	return fallback
-}
-
-func configuredTrafficFlowLogPath(router *api.Router) string {
-	fallback := platformDefaults.StateDir + "/traffic-flows.db"
-	if router == nil {
-		return fallback
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "TrafficFlowLog" {
-			continue
-		}
-		spec, err := resource.TrafficFlowLogSpec()
-		if err != nil || !spec.Enabled {
-			continue
-		}
-		if strings.TrimSpace(spec.Path) != "" {
-			return spec.Path
-		}
-	}
-	return fallback
-}
-
 func configuredDHCPLeasePaths(controllerDnsmasqConfig string) []string {
 	var paths []string
 	if leaseFile := dnsmasqLeaseFileForConfig(controllerDnsmasqConfig); strings.TrimSpace(leaseFile) != "" {
@@ -1682,26 +1642,6 @@ func dedupeStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
-}
-
-func configuredFirewallLogPath(router *api.Router) string {
-	fallback := platformDefaults.FirewallLogFile()
-	if router == nil {
-		return fallback
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "FirewallEventLog" {
-			continue
-		}
-		spec, err := resource.FirewallEventLogSpec()
-		if err != nil || !spec.Enabled {
-			continue
-		}
-		if strings.TrimSpace(spec.Path) != "" {
-			return spec.Path
-		}
-	}
-	return fallback
 }
 
 func webConsoleResourcePresent(router *api.Router) bool {
@@ -2399,8 +2339,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	}
 	var generation int64
 	generationCreated := false
-	// Scheduled reconciliation repairs already-applied state. It must not create
-	// another identical configuration snapshot on every interval.
+	// Scheduled observation reuses the current generation.
 	if !opts.DryRun && store != nil && !scheduled {
 		outcome.Stage = "begin-generation"
 		configYAML, err := routerConfigYAML(router, opts)

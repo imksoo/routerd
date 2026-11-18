@@ -155,20 +155,16 @@ func statusValue(status map[string]any, field string) any {
 }
 
 func APIVersionForKind(kind string) string {
+	if v := api.ConfigAPIVersionForKind(kind); v != "" {
+		return v
+	}
 	switch kind {
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "WebConsole", "ServiceUnit":
+	case "ServiceUnit":
 		return api.SystemAPIVersion
-	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
-		return api.FirewallAPIVersion
-	case "TunnelInterface", "OverlayPeer", "HybridRoute", "CloudProviderProfile":
-		return api.HybridAPIVersion
-	case "MobilityPool", "SAMNodeSet", "SAMTransportProfile":
-		return api.MobilityAPIVersion
-	default:
-		return api.NetAPIVersion
 	}
+	return api.NetAPIVersion
 }
 
 func SplitResource(ref string) (string, string, bool) {
