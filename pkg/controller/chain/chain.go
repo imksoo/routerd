@@ -792,7 +792,7 @@ func bgpStatusSubscriptions(router *api.Router) []bus.Subscription {
 	// SAMTransportProfile status is written only after its DynamicConfigPart is
 	// durable.  Waking BGP here applies a newly agreed direct peer group without
 	// waiting for its ordinary polling interval.
-	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer", "SAMTransportProfile")))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer", "BGPDynamicPeer"}, "BFD", "BGPRouter", "BGPPeer", "SAMTransportProfile")))
 }
 
 func samTransportStatusSubscriptions() []bus.Subscription {
@@ -1506,53 +1506,18 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
-	logger := r.Opts.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
-	decision, closeLease, err := r.oneShotHADecision(ctx, store)
+	_, closeLease, err := r.oneShotHADecision(ctx, store)
 	if err != nil {
 		return err
 	}
 	defer closeLease()
-	controllers, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
-	if err != nil {
-		return err
+	// Wait for any controller mutation already in flight before observation.
+	if gate := r.Opts.MutationGate; gate != nil {
+		gate.Lock()
+		gate.Unlock()
 	}
-	controllers = filterScheduledReconcileControllers(controllers)
-	loop := framework.Runner{MutationGate: r.Opts.MutationGate, Exclusive: true, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
-	return loop.RunOnce(ctx, controllers...)
-}
-
-func filterScheduledReconcileControllers(controllers []framework.Controller) []framework.Controller {
-	out := make([]framework.Controller, 0, len(controllers))
-	for _, controller := range controllers {
-		if scheduledReconcileSkipsController(controller.Name()) {
-			continue
-		}
-		out = append(out, controller)
-	}
-	return out
-}
-
-func scheduledReconcileSkipsController(name string) bool {
-	switch name {
-	case "package", "kernel-module", "sysctl", "hostname", "ssh-host-key", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
-		// These controllers already run from the serve event loop with their own
-		// periodic cadence and status subscriptions. Running them again from
-		// --apply-interval makes the scheduled pass probe or rewrite host state
-		// without adding a stronger convergence signal.
-		"link", "bridge", "vxlan-tunnel", "tunnel", "wireguard", "ipv4-static-address", "ipv4-policy-route", "ipv4-route", "hybrid-route",
-		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "lan-address",
-		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
-		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
-		"ingress-service", "nat44", "bfd", "bgp", "vrrp", "ip-address-set", "firewall", "observability-pipeline",
-		"daemon-status", "client-service-unit", "arp-observer-sync", "dhcp-lease-sync", "nat44-session-sync":
-		return true
-	default:
-		return false
-	}
+	return nil
 }
 
 func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.Decision, func(), error) {
@@ -1614,7 +1579,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
 	vxlanTunnel := VXLANTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
 	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, BGPSocketPath: opts.BGPSocketPath, BGPControlSocketPath: opts.BGPControlSocketPath, BGPStatePath: opts.BGPStatePath}
-	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
+	logRetention := LogRetentionController{StatePath: r.Store.DatabasePath(), Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
 	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets}
 	link := LinkController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, Logger: logger, DryRun: opts.DryRunAddress}

@@ -18,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -1629,139 +1630,23 @@ type resourceWhenRef struct {
 }
 
 func resourceWhens(res api.Resource) []resourceWhenRef {
+	var out []resourceWhenRef
+	if when := resourcequery.ResourceWhen(res); !isZeroResourceWhen(when) {
+		out = append(out, resourceWhenRef{path: res.ID() + " spec.when", when: when})
+	}
 	switch res.Kind {
-	case "ObservabilityPipeline":
-		spec, _ := res.ObservabilityPipelineSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "RouterdCluster":
-		spec, _ := res.RouterdClusterSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "Interface":
-		spec, _ := res.InterfaceSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "VXLANTunnel":
-		spec, _ := res.VXLANTunnelSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "VirtualAddress":
 		spec, _ := res.VirtualAddressSpec()
-		items := []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 		if spec.VRRP.GracefulActivation != nil {
-			items = append(items, resourceWhenRef{path: res.ID() + " spec.vrrp.gracefulActivation.readyWhen", when: spec.VRRP.GracefulActivation.ReadyWhen})
+			out = append(out, resourceWhenRef{path: res.ID() + " spec.vrrp.gracefulActivation.readyWhen", when: spec.VRRP.GracefulActivation.ReadyWhen})
 		}
-		return items
-	case "BGPRouter":
-		spec, _ := res.BGPRouterSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "BGPPeer":
-		spec, _ := res.BGPPeerSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "BGPDynamicPeer":
-		spec, _ := res.BGPDynamicPeerSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "BFD":
-		spec, _ := res.BFDSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "TailscaleNode":
-		spec, _ := res.TailscaleNodeSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "NTPClient":
-		spec, _ := res.NTPClientSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "NTPServer":
-		spec, _ := res.NTPServerSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv4Client":
-		spec, _ := res.DHCPv4ClientSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IPv4StaticAddress":
-		spec, _ := res.IPv4StaticAddressSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "ClusterNetworkRoute":
-		spec, _ := res.ClusterNetworkRouteSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv4Server":
-		spec, _ := res.DHCPv4ServerSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv4Reservation":
-		spec, _ := res.DHCPv4ReservationSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IPv6DelegatedAddress":
-		spec, _ := res.IPv6DelegatedAddressSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv6Server":
-		spec, _ := res.DHCPv6ServerSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv4ServerLeaseSync":
-		spec, _ := res.DHCPv4ServerLeaseSyncSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv6ServerLeaseSync":
-		spec, _ := res.DHCPv6ServerLeaseSyncSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv6PrefixDelegationLeaseSync":
-		spec, _ := res.DHCPv6PrefixDelegationLeaseSyncSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv6PrefixDelegation":
-		spec, _ := res.DHCPv6PrefixDelegationSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DHCPv6Information":
-		spec, _ := res.DHCPv6InformationSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IPv6RouterAdvertisement":
-		spec, _ := res.IPv6RouterAdvertisementSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DSLiteTunnel":
-		spec, _ := res.DSLiteTunnelSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DNSForwarder":
-		spec, _ := res.DNSForwarderSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DNSResolver":
-		spec, _ := res.DNSResolverSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "DNSUpstream":
-		spec, _ := res.DNSUpstreamSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "EventGroup":
-		spec, _ := res.EventGroupSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "HealthCheck":
-		spec, _ := res.HealthCheckSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "NAT44Rule":
-		spec, _ := res.NAT44RuleSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "NAT44FlowDNATPinhole":
-		spec, _ := res.NAT44FlowDNATPinholeSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "NAT44SessionSync":
-		spec, _ := res.NAT44SessionSyncSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "PortForward":
-		spec, _ := res.PortForwardSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IngressService":
-		spec, _ := res.IngressServiceSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IPAddressSet":
-		spec, _ := res.IPAddressSetSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "LocalServiceRedirect":
-		spec, _ := res.LocalServiceRedirectSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "FirewallFlowPinhole":
-		spec, _ := res.FirewallFlowPinholeSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "EgressRoutePolicy":
 		spec, _ := res.EgressRoutePolicySpec()
-		out := make([]resourceWhenRef, 0, len(spec.Candidates)+1)
-		out = append(out, resourceWhenRef{path: res.ID() + " spec.when", when: spec.When})
 		for i, candidate := range spec.Candidates {
 			out = append(out, resourceWhenRef{path: fmt.Sprintf("%s spec.candidates[%d].when", res.ID(), i), when: candidate.When})
 		}
-		return out
-	default:
-		return nil
 	}
+	return out
 }
 
 func validateResourceWhen(path string, when api.ResourceWhenSpec) error {

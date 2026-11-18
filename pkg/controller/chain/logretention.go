@@ -16,10 +16,11 @@ import (
 )
 
 type LogRetentionController struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	DryRun bool
+	StatePath string
+	Router    *api.Router
+	Bus       *bus.Bus
+	Store     Store
+	DryRun    bool
 }
 
 func (c LogRetentionController) Reconcile(ctx context.Context) error {
@@ -40,7 +41,7 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		if !retentionDue(c.Store.ObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name), spec.Schedule) {
 			continue
 		}
-		targetSpecs := logRetentionTargets(c.Router, spec)
+		targetSpecs := logRetentionTargets(c.Router, spec, c.StatePath)
 		var archive *eventlog.Logger
 		if len(spec.Sinks) > 0 {
 			archive, err = eventlog.NewSelected(c.Router, spec.Sinks)
@@ -97,7 +98,7 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.LogRetentionTargetSpec {
+func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec, statePath string) []api.LogRetentionTargetSpec {
 	signals := spec.Signals
 	if len(signals) == 0 {
 		signals = []string{"events", "accessLogs", "pluginRuns", "dnsQueries", "trafficFlows", "firewallEvents", "dhcpFingerprints"}
@@ -105,7 +106,7 @@ func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.Lo
 	byFile := map[string]int{}
 	var out []api.LogRetentionTargetSpec
 	for _, signal := range signals {
-		for _, file := range logRetentionSignalFiles(router, signal) {
+		for _, file := range logRetentionSignalFiles(router, signal, statePath) {
 			if i, ok := byFile[file]; ok {
 				out[i].Signals = append(out[i].Signals, signal)
 				continue
@@ -117,54 +118,17 @@ func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.Lo
 	return out
 }
 
-func logRetentionSignalFiles(router *api.Router, signal string) []string {
+func logRetentionSignalFiles(router *api.Router, signal, statePath string) []string {
 	defaults, _ := platform.Current()
 	switch signal {
 	case "events", "accessLogs", "pluginRuns":
-		return []string{defaults.DBFile()}
+		return []string{statePath}
 	case "dnsQueries":
-		if router != nil {
-			var out []string
-			for _, res := range router.Spec.Resources {
-				if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSResolver" {
-					continue
-				}
-				spec, err := res.DNSResolverSpec()
-				if err == nil && spec.QueryLog.Enabled && spec.QueryLog.Path != "" {
-					out = append(out, spec.QueryLog.Path)
-				}
-			}
-			if len(out) > 0 {
-				return out
-			}
-		}
-		return []string{defaults.StateDir + "/dns-queries.db"}
+		return logstore.DNSQueryPaths(router, defaults.StateDir+"/dns-queries.db")
 	case "trafficFlows":
-		if router != nil {
-			for _, res := range router.Spec.Resources {
-				if res.APIVersion != api.NetAPIVersion || res.Kind != "TrafficFlowLog" {
-					continue
-				}
-				spec, err := res.TrafficFlowLogSpec()
-				if err == nil && spec.Enabled && spec.Path != "" {
-					return []string{spec.Path}
-				}
-			}
-		}
-		return []string{defaults.StateDir + "/traffic-flows.db"}
+		return []string{logstore.TrafficFlowPath(router, defaults.StateDir+"/traffic-flows.db")}
 	case "firewallEvents":
-		if router != nil {
-			for _, res := range router.Spec.Resources {
-				if res.APIVersion != api.FirewallAPIVersion || res.Kind != "FirewallEventLog" {
-					continue
-				}
-				spec, err := res.FirewallEventLogSpec()
-				if err == nil && spec.Enabled && spec.Path != "" {
-					return []string{spec.Path}
-				}
-			}
-		}
-		return []string{defaults.FirewallLogFile()}
+		return []string{logstore.FirewallPath(router, defaults.FirewallLogFile())}
 	case "dhcpFingerprints":
 		return []string{defaults.StateDir + "/dhcp-fingerprints.db"}
 	default:

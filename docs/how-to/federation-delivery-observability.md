@@ -190,7 +190,7 @@ apply.
 |-------|------|------|------|
 | **failed deliveries** | Any delivery row in `failed` status | — | `FAILED == 0` |
 | **pending deliveries** | Pending events whose TTL expires within `expiresSoonSeconds` | Pending exists but no imminent expiry | `PENDING == 0` |
-| **stale TTL** | All delivered events have stale TTL (`STALE_TTL == DELIVERED`) | Some deliveries have stale TTL | `STALE_TTL == 0` |
+| **stale TTL** | — | One or more deliveries await a refreshed TTL (`STALE_TTL > 0`) | `STALE_TTL == 0` |
 | **delivery lag** | Max lag >= `lagFailSeconds` (default 180 s) | Max lag >= `lagWarnSeconds` (default 60 s) | Below `lagWarnSeconds` |
 | **event expiry** | Nearest expiry < `expiresSoonSeconds` (default 120 s) with pending/failed deliveries | Nearest expiry < `expiresSoonSeconds`, all delivered | Comfortable margin |
 

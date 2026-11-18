@@ -99,3 +99,15 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{NetAPIVersion, "Hostname", HostnameSpec{}},
 	}
 }
+
+var configVersionsByKind = func() map[string]string {
+	versions := make(map[string]string)
+	for _, resource := range ConfigResourceKinds() {
+		versions[resource.Kind] = resource.APIVersion
+	}
+	return versions
+}()
+
+func ConfigAPIVersionForKind(kind string) string {
+	return configVersionsByKind[kind]
+}

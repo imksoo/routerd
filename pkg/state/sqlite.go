@@ -64,6 +64,8 @@ type objectRef struct {
 
 type objectStatus map[string]any
 
+func (s *SQLiteStore) DatabasePath() string { return s.path }
+
 func OpenSQLite(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
@@ -132,7 +134,11 @@ func OpenSQLiteReadOnlyImmutable(path string) (*SQLiteStore, error) {
 }
 
 func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
-	u := url.URL{Scheme: "file", Path: path}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	u := url.URL{Scheme: "file", Path: absolute}
 	q := u.Query()
 	q.Set("mode", "ro")
 	if immutable {

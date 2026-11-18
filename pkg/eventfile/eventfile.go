@@ -3,9 +3,14 @@
 package eventfile
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 const DefaultMaxBytes int64 = 4 << 20
@@ -33,4 +38,35 @@ func AppendJSONLineWithLimit(path string, value any, maxBytes int64) error {
 	}
 	defer file.Close()
 	return json.NewEncoder(file).Encode(value)
+}
+
+const HistoryLimit = 1000
+
+// Restore returns the most recent events in file order and the largest cursor read.
+func Restore(path string) ([]daemonapi.DaemonEvent, uint64, error) {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer file.Close()
+	var events []daemonapi.DaemonEvent
+	var cursor uint64
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var event daemonapi.DaemonEvent
+		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			continue
+		}
+		events = append(events, event)
+		if len(events) > HistoryLimit {
+			events = events[1:]
+		}
+		if id, err := strconv.ParseUint(event.Cursor, 10, 64); err == nil && id > cursor {
+			cursor = id
+		}
+	}
+	return events, cursor, scanner.Err()
 }

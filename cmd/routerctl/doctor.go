@@ -223,6 +223,9 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		return err
 	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
 	runner := doctorRunner{opts: opts, router: router, store: store}
 	collectChecks := opts.Target != "incident"
 	areas := doctorAreas
@@ -2550,13 +2553,17 @@ func (r doctorRunner) doctorDisk() []doctorCheck {
 
 func doctorEventJournalCheck(store routerstate.Store) doctorCheck {
 	type journalStatsReader interface {
-		EventJournalStats() routerstate.EventJournalStats
+		ReadEventJournalStats() (routerstate.EventJournalStats, error)
 	}
 	reader, ok := store.(journalStatsReader)
 	if !ok {
 		return doctorCheck{Area: "disk", Name: "event journal", Status: doctorSkip, Detail: "state store does not expose event journal limits"}
 	}
-	return doctorEventJournalStatsCheck(reader.EventJournalStats())
+	stats, err := reader.ReadEventJournalStats()
+	if err != nil {
+		return doctorCheck{Area: "disk", Name: "event journal", Status: doctorWarn, Detail: err.Error()}
+	}
+	return doctorEventJournalStatsCheck(stats)
 }
 
 func doctorEventJournalStatsCheck(stats routerstate.EventJournalStats) doctorCheck {

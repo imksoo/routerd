@@ -64,8 +64,18 @@ func IsStorageFullError(err error) bool {
 }
 
 func (s *SQLiteStore) loadEventJournalUsage() error {
+	return s.readJournalUsage(&s.eventJournalRows, &s.eventJournalPayloadBytes)
+}
+
+func (s *SQLiteStore) ReadEventJournalStats() (EventJournalStats, error) {
+	stats := s.EventJournalStats()
+	err := s.readJournalUsage(&stats.Rows, &stats.PayloadBytes)
+	return stats, err
+}
+
+func (s *SQLiteStore) readJournalUsage(rows, payloadBytes *int64) error {
 	return s.db.QueryRow(`SELECT count(*), coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events`).
-		Scan(&s.eventJournalRows, &s.eventJournalPayloadBytes)
+		Scan(rows, payloadBytes)
 }
 
 func (s *SQLiteStore) ensureEventJournalCapacityLocked(incomingBytes int64) error {
