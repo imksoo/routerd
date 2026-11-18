@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261118.1332
+
 - Honor dynamic BGP peer conditions, resolve resource kinds and log paths consistently, and open live state read-only for diagnostics. Simplify event history, scheduled observation and package builds. Build the Web Console with esbuild.
 
 ## v20261117.0407

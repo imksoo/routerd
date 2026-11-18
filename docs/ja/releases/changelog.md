@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261118.1332
+
 - 動的BGPピアの条件判定、Kindの解決、ログの表示・保持先を修正。診断は状態DBを読み取り専用で開く。イベント履歴、定期観測、配布工程を整理し、Web Consoleのビルドをesbuildに変更。
 
 ## v20261117.0407

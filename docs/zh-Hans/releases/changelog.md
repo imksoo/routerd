@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261118.1332
+
 - 修正动态 BGP 对等体的条件判断，统一资源类型和日志路径的解析。诊断以只读方式打开状态数据库。简化事件历史、定期观测和打包流程，改用 esbuild 构建 Web Console。
 
 ## v20261117.0407
