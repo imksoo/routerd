@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+- DNS 快取回應傳回剩餘 TTL。BGP 同步一次讀取所有本機 IPv4 位址。連線歷史保留未納入明細樣本的活動連線。主要 Debian 套件改用 xz 壓縮。
+
 ## v20261118.1332
 
 - 修正動態 BGP 對等節點的條件判斷，統一資源類型與日誌路徑的解析。診斷以唯讀方式開啟狀態資料庫。簡化事件歷史、定期觀測及封裝流程，改用 esbuild 建置 Web Console。
