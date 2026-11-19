@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261119.1122
+
 - Cached DNS answers return the remaining TTL. BGP reads local IPv4 addresses in one dump. Traffic history keeps active connections open even outside the detail sample. The main Debian package uses xz compression.
 
 ## v20261118.1332
