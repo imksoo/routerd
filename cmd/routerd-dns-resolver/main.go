@@ -76,6 +76,7 @@ type boundListener struct {
 }
 
 type cacheEntry struct {
+	StoredAt   time.Time
 	Message    []byte
 	Expires    time.Time
 	Generation uint64
@@ -460,9 +461,18 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 	}
 	cacheKey := dnsCacheKey(localAddr, req)
 	if config.Spec.Cache.Enabled {
-		if cached, ok := d.cacheGet(cacheKey, generation); ok {
+		if cached, ageSeconds, ok := d.cacheGet(cacheKey, generation); ok {
 			var msg dns.Msg
 			if err := msg.Unpack(cached); err == nil {
+				for _, section := range [][]dns.RR{msg.Answer, msg.Ns, msg.Extra} {
+					for _, rr := range section {
+						h := rr.Header()
+						if h.Rrtype == dns.TypeOPT || h.Rrtype == dns.TypeTSIG {
+							continue
+						}
+						h.Ttl -= uint32(min(uint64(h.Ttl), ageSeconds))
+					}
+				}
 				msg.Id = req.Id
 				return resolveResult{Response: &msg, CacheHit: true, Upstream: "cache", ResponseCode: dns.RcodeToString[msg.Rcode]}, nil
 			}
@@ -639,15 +649,17 @@ func sourcesForListen(config dnsresolver.RuntimeConfig, sources []runtimeSource,
 	return out
 }
 
-func (d *daemon) cacheGet(key string, generation uint64) ([]byte, bool) {
+func (d *daemon) cacheGet(key string, generation uint64) ([]byte, uint64, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	now := time.Now()
 	entry, ok := d.cache[key]
-	if !ok || entry.Generation != generation || time.Now().After(entry.Expires) {
+	if !ok || entry.Generation != generation || !now.Before(entry.Expires) {
 		delete(d.cache, key)
-		return nil, false
+		return nil, 0, false
 	}
-	return append([]byte(nil), entry.Message...), true
+	ageSeconds := uint64(max(now.Sub(entry.StoredAt), 0) / time.Second)
+	return append([]byte(nil), entry.Message...), ageSeconds, true
 }
 
 func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries int, generation uint64) {
@@ -668,7 +680,8 @@ func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries 
 			break
 		}
 	}
-	d.cache[key] = cacheEntry{Message: append([]byte(nil), msg...), Expires: time.Now().Add(ttl), Generation: generation}
+	now := time.Now()
+	d.cache[key] = cacheEntry{StoredAt: now, Message: append([]byte(nil), msg...), Expires: now.Add(ttl), Generation: generation}
 }
 
 func (d *daemon) routes() http.Handler {

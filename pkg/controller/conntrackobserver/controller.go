@@ -199,9 +199,23 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	if path == "" {
 		path = "/var/lib/routerd/traffic-flows.db"
 	}
-	table, err := observe.Connections(10000)
+	table, err := observe.Connections(-1)
 	if err != nil {
 		return err
+	}
+	const detailLimit = 10000
+	sampled := len(table.Entries) > detailLimit
+	activeKeys := make([]string, 0, len(table.Entries))
+	if sampled {
+		for i := range table.Entries {
+			entry := &table.Entries[i]
+			activeKeys = append(activeKeys, logstore.FlowKey(
+				entry.Protocol,
+				entry.Original.Source, atoi(entry.Original.SourcePort),
+				entry.Original.Destination, atoi(entry.Original.DestinationPort),
+			))
+		}
+		table.LimitEntries(detailLimit)
 	}
 	log, err := logstore.OpenTrafficFlowLog(path)
 	if err != nil {
@@ -218,28 +232,29 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 		}
 	}
 	now := time.Now().UTC()
-	var active []string
 	var flows []logstore.TrafficFlow
 	for _, entry := range table.Entries {
 		flow := trafficFlowFromConnection(entry, now)
 		if flow.FlowKey == "" {
 			continue
 		}
-		active = append(active, flow.FlowKey)
+		if !sampled {
+			activeKeys = append(activeKeys, flow.FlowKey)
+		}
 		flows = append(flows, flow)
 	}
 	if dpiStore != nil {
 		enrichTrafficFlowsFromDPIStore(ctx, dpiStore, flows, now, time.Hour)
 	}
 	c.recordTrafficMetrics(ctx, table.Entries)
-	if err := log.SyncActive(ctx, flows, active, now); err != nil {
+	if err := log.SyncActive(ctx, flows, activeKeys, now); err != nil {
 		return err
 	}
 	status := map[string]any{
 		"phase":       "Observed",
 		"path":        path,
 		"source":      stringutil.FirstNonEmpty(spec.Source, "conntrack"),
-		"activeFlows": len(active),
+		"activeFlows": len(flows),
 		"count":       count,
 		"observedAt":  now.Format(time.RFC3339Nano),
 	}

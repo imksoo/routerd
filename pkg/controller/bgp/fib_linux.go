@@ -146,26 +146,20 @@ type localIPv4Address struct {
 }
 
 func localIPv4Addresses() ([]localIPv4Address, error) {
-	var out []localIPv4Address
-	links, err := netlink.LinkList()
+	addrs, err := netlink.AddrList(nil, netlink.FAMILY_V4)
 	if err != nil {
-		return nil, fmt.Errorf("list links for local IPv4 addresses: %w", err)
+		return nil, fmt.Errorf("list local IPv4 addresses: %w", err)
 	}
-	for _, link := range links {
-		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
-		if err != nil {
-			return nil, fmt.Errorf("list local IPv4 addresses on %s: %w", link.Attrs().Name, err)
+	var out []localIPv4Address
+	for _, local := range addrs {
+		if local.IP == nil {
+			continue
 		}
-		for _, local := range addrs {
-			if local.IP == nil {
-				continue
-			}
-			addr, ok := netip.AddrFromSlice(local.IP.To4())
-			if !ok || !addr.Is4() {
-				continue
-			}
-			out = append(out, localIPv4Address{Address: addr})
+		addr, ok := netip.AddrFromSlice(local.IP.To4())
+		if !ok || !addr.Is4() {
+			continue
 		}
+		out = append(out, localIPv4Address{Address: addr})
 	}
 	return out, nil
 }
