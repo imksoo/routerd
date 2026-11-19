@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -309,13 +310,15 @@ func endMissingTrafficFlows(ctx context.Context, exec trafficFlowExec, activeKey
 		_, err := exec.ExecContext(ctx, `UPDATE flows SET ts_ended = ? WHERE ts_ended IS NULL`, endedAt.UnixNano())
 		return err
 	}
-	quoted := make([]string, len(activeKeys))
-	args := []any{endedAt.UnixNano()}
-	for i, key := range activeKeys {
-		quoted[i] = "?"
-		args = append(args, key)
+	keysJSON, err := json.Marshal(activeKeys)
+	if err != nil {
+		return err
 	}
-	_, err := exec.ExecContext(ctx, `UPDATE flows SET ts_ended = ? WHERE ts_ended IS NULL AND flow_key NOT IN (`+strings.Join(quoted, ",")+`)`, args...)
+	_, err = exec.ExecContext(ctx, `
+    UPDATE flows SET ts_ended = ?
+    WHERE ts_ended IS NULL
+      AND flow_key NOT IN (SELECT value FROM json_each(?))`,
+		endedAt.UnixNano(), string(keysJSON))
 	return err
 }
 

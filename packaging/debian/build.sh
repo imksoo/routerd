@@ -33,4 +33,4 @@ Maintainer: routerd maintainers <routerd@localhost>
 Depends: ca-certificates, iproute2, nftables, dnsmasq-base
 Description: Declarative router configuration and management
 CONTROL
-dpkg-deb -Zgzip --root-owner-group --build "$stage" "$output"
+dpkg-deb -Zxz --root-owner-group --build "$stage" "$output"
