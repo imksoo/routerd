@@ -19,7 +19,7 @@ fc:b2:14:8c:49:1a,172.18.1.127,MacBookProM5Max,12h
 	want := []RuntimeDHCPHostRecord{
 		{Hostname: "MacBookProM5Max", IP: "172.18.1.127"},
 		{Hostname: "MacBookProM5Max", IP: "172.18.1.181"},
-		{Hostname: "nichicon-home-battery", IP: "172.18.0.150"},
+		{Hostname: "nichicon-home-battery", IP: "172.18.0.150", Reserved: true},
 	}
 	if got := ParseDNSMasqHostRecords(data); !reflect.DeepEqual(got, want) {
 		t.Fatalf("records = %#v, want %#v", got, want)
