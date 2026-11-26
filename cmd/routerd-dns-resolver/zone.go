@@ -50,6 +50,7 @@ const (
 	zoneRecordSourceStickySnapshot  zoneRecordSource = 20
 	zoneRecordSourceActiveEvent     zoneRecordSource = 30
 	zoneRecordSourceActiveLeaseFile zoneRecordSource = 40
+	zoneRecordSourceReservation     zoneRecordSource = 46
 	zoneRecordSourceStatic          zoneRecordSource = 50
 
 	// A newly received event is newer than the lease file loaded into the
@@ -355,7 +356,11 @@ func (z *zoneData) addRecoveredLease(record dnsresolver.RuntimeDHCPHostRecord) {
 	if record.Hostname == "" || record.IP == "" {
 		return
 	}
-	z.addLease(dhcpLeaseEvent{IP: record.IP, Hostname: record.Hostname}, zoneRecordSourceStickySnapshot)
+	source := zoneRecordSourceStickySnapshot
+	if record.Reserved {
+		source = zoneRecordSourceReservation
+	}
+	z.addLease(dhcpLeaseEvent{IP: record.IP, Hostname: record.Hostname}, source)
 }
 
 func (z *zoneData) mergeRecord(record zoneRecord) {
@@ -432,21 +437,12 @@ func (z *zoneData) removeRecord(name string) {
 
 func (z *zoneData) deleteDynamic(ip string) {
 	for name, record := range z.Records {
-		if record.Source == zoneRecordSourceStatic {
+		if record.Source >= zoneRecordSourceReservation {
 			continue
 		}
 		if contains(record.IPv4, ip) || contains(record.IPv6, ip) {
-			delete(z.Records, name)
+			z.removeRecord(name)
 		}
-	}
-	if ptr, err := dns.ReverseAddr(ip); err == nil {
-		ptrName := dns.Fqdn(ptr)
-		if target := z.PTR[ptrName]; target != "" {
-			if record, exists := z.Records[strings.ToLower(dns.Fqdn(target))]; exists && record.Source == zoneRecordSourceStatic {
-				return
-			}
-		}
-		delete(z.PTR, ptrName)
 	}
 }
 

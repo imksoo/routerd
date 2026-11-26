@@ -239,3 +239,58 @@ func TestParseDNSUpstreamDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestZoneLeaseRemovalPreservesReservation(t *testing.T) {
+	zone := resolvercfg.RuntimeZone{Name: "home", Spec: api.DNSZoneSpec{Zone: "home.internal", DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan"}}}}
+	zone.DHCPHostRecords = resolvercfg.ParseDNSMasqHostRecords([]byte("00:11:22:33:44:55,192.0.2.10,reserved,12h\n00:11:22:33:44:55,set:pc,reserved,192.0.2.10\n"))
+	table := newZoneTable([]resolvercfg.RuntimeZone{zone})
+	for _, host := range []dhcpLeaseEvent{{Hostname: "reserved", IP: "192.0.2.10"}, {Hostname: "leased", IP: "192.0.2.11"}} {
+		table.ApplyLease(host)
+		query := new(dns.Msg)
+		query.SetQuestion(host.Hostname+".home.internal.", dns.TypeA)
+		if resp, ok := table.Answer(query, nil); !ok || len(resp.Answer) != 1 {
+			t.Fatalf("before removal: %s: %v", host.Hostname, resp)
+		}
+		host.Action = "removed"
+		table.ApplyLease(host)
+	}
+	for _, tc := range []struct {
+		name  string
+		kind  uint16
+		code  int
+		value string
+	}{
+		{"reserved.home.internal.", dns.TypeA, dns.RcodeSuccess, "192.0.2.10"},
+		{"reserved.home.internal.", dns.TypeAAAA, dns.RcodeSuccess, ""},
+		{"10.2.0.192.in-addr.arpa.", dns.TypePTR, dns.RcodeSuccess, "reserved.home.internal."},
+		{"leased.home.internal.", dns.TypeA, dns.RcodeNameError, ""},
+	} {
+		req := new(dns.Msg)
+		req.SetQuestion(tc.name, tc.kind)
+		resp, ok := table.Answer(req, nil)
+		if !ok || resp.Rcode != tc.code {
+			t.Fatalf("%s: got %v", tc.name, resp)
+		}
+		if tc.value == "" {
+			if len(resp.Answer) != 0 {
+				t.Fatal(resp.Answer)
+			}
+			continue
+		}
+		if len(resp.Answer) != 1 {
+			t.Fatal(resp.Answer)
+		}
+		switch rr := resp.Answer[0].(type) {
+		case *dns.A:
+			if rr.A.String() != tc.value {
+				t.Fatal(rr)
+			}
+		case *dns.PTR:
+			if rr.Ptr != tc.value {
+				t.Fatal(rr)
+			}
+		default:
+			t.Fatal(rr)
+		}
+	}
+}

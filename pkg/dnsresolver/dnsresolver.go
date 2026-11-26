@@ -35,13 +35,14 @@ type RuntimeZone struct {
 type RuntimeDHCPHostRecord struct {
 	Hostname string `json:"hostname"`
 	IP       string `json:"ip"`
+	Reserved bool   `json:"reserved,omitempty"`
 }
 
 // ParseDNSMasqHostRecords extracts hostname/address pairs from routerd's
 // dnsmasq-hosts sidecar. The sidecar contains both reservation form
 // (mac,set:tag,hostname,ip) and sticky form (mac,ip,hostname,lease-time).
 func ParseDNSMasqHostRecords(data []byte) []RuntimeDHCPHostRecord {
-	seen := map[string]bool{}
+	indices := map[string]int{}
 	var records []RuntimeDHCPHostRecord
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -66,9 +67,11 @@ func ParseDNSMasqHostRecords(data []byte) []RuntimeDHCPHostRecord {
 			continue
 		}
 		hostname := ""
+		reserved := false
 		for _, index := range []int{ipIndex + 1, ipIndex - 1} {
 			if index >= 0 && index < len(fields) && dnsmasqHostnameField(fields[index]) {
 				hostname = fields[index]
+				reserved = index < ipIndex
 				break
 			}
 		}
@@ -76,11 +79,12 @@ func ParseDNSMasqHostRecords(data []byte) []RuntimeDHCPHostRecord {
 			continue
 		}
 		key := strings.ToLower(hostname) + "|" + ip
-		if seen[key] {
+		if i, ok := indices[key]; ok {
+			records[i].Reserved = records[i].Reserved || reserved
 			continue
 		}
-		seen[key] = true
-		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip})
+		indices[key] = len(records)
+		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip, Reserved: reserved})
 	}
 	sort.Slice(records, func(i, j int) bool {
 		left := strings.ToLower(records[i].Hostname) + "|" + records[i].IP
