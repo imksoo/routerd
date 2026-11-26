@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261126.1233
+
 - DHCP 租约删除后仍可正向及反向解析固定预留的主机名。
 
 ## v20261119.1122

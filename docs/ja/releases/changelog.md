@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261126.1233
+
 - DHCPリース削除後も固定予約名の正引き・逆引きができるようにしました。
 
 ## v20261119.1122

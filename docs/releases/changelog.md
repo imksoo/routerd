@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261126.1233
+
 - DNS keeps configured DHCP reservation names and reverse records after lease removal.
 
 ## v20261119.1122
