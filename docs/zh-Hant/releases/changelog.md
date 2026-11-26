@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+- DHCP 租約刪除後仍可正向及反向解析固定位址保留的主機名稱。
+
 ## v20261119.1122
 
 - DNS 快取回應傳回剩餘 TTL。BGP 同步一次讀取所有本機 IPv4 位址。連線歷史保留未納入明細樣本的活動連線。主要 Debian 套件改用 xz 壓縮。

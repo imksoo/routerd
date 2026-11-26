@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+- DHCP 租约删除后仍可正向及反向解析固定预留的主机名。
+
 ## v20261119.1122
 
 - DNS 缓存应答返回剩余 TTL。BGP 同步一次读取所有本机 IPv4 地址。连接历史保留未进入明细样本的活动连接。主 Debian 软件包使用 xz 压缩。
