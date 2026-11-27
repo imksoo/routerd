@@ -104,7 +104,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  --status-socket <path>           read-only status Unix domain socket path")
 	fmt.Fprintln(w, "  --state-file <path>              routerd state database file")
 	fmt.Fprintln(w, "  --controllers <list>             comma-separated controllers to run (default all; use bgp for isolated BGP labs)")
-	fmt.Fprintln(w, "  --apply-interval <dur>           periodic apply interval; 0 disables scheduled apply")
 	fmt.Fprintln(w, "  --graceful-stop-timeout <dur>    wait up to this long for mobility make-before-break handoff on SIGTERM/SIGINT (default 20s; 0 disables)")
 	fmt.Fprintln(w, "  --once                           converge once and exit without serving control sockets")
 	fmt.Fprintln(w, "")

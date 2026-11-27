@@ -56,7 +56,7 @@
 
 | YAML | 指定要求 | 型別與限制 | 欄位意義與預設值 |
 | --- | --- | --- | --- |
-| `spec.enabled` | *選填* | boolean | 預設 false。true 要求收集服務並啟用群組紀錄選項；目前服務產生也會要求 DPI 分類輔助程式。 |
+| `spec.enabled` | *選填* | boolean | 預設 false。true 啟動防火牆記錄收集服務及直接分類封包的 nDPI 代理程式。 |
 | `spec.path` | **條件必填** | string | 選用 SQLite 資料庫路徑。Linux 預設 /var/lib/routerd/firewall-logs.db，FreeBSD 為 /var/db/routerd/firewall-logs.db。這是資料庫，不是逐行 JSON 檔案。 |
 | `spec.events` | *選填* | array | 接受 deny、allow、rateLimit、connLimit，預設空。目前僅驗證，不篩選收集輸入或產生的防火牆紀錄。 |
 | `spec.fromZones` | *選填* | array | 預設空。來源區域須為 FirewallZone 名稱或 self，但執行時不作紀錄篩選。 |

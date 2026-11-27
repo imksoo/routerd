@@ -40,7 +40,6 @@ import (
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/dhcpeventqueue"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
@@ -225,7 +224,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	httpTLSClientCAFile := fs.String("http-tls-client-ca-file", "", "CA bundle for requiring and verifying HTTP ControlAPI client certificates")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
-	applyInterval := fs.Duration("apply-interval", 0, "periodic status observation interval; 0 disables scheduled observation")
 	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
 	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
@@ -332,10 +330,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 	}()
 	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
-		"config":        *configPath,
-		"socket":        *socketPath,
-		"statusSocket":  *statusSocketPath,
-		"applyInterval": applyInterval.String(),
+		"config":       *configPath,
+		"socket":       *socketPath,
+		"statusSocket": *statusSocketPath,
 	})
 	if loopbackErr := ensureLoopbackUp(); loopbackErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "failed to ensure loopback is up", map[string]string{"error": loopbackErr.Error()})
@@ -345,7 +342,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		StatusFile:           *statusFile,
 		NetplanPath:          *netplanPath,
 		DnsmasqConfigPath:    *dnsmasqConfigPath,
-		DnsmasqServicePath:   runtimeDnsmasqServicePath(*dnsmasqServicePath),
+		DnsmasqServicePath:   *dnsmasqServicePath,
 		NftablesPath:         *nftablesPath,
 		StatePath:            *statePath,
 		BGPSocketPath:        *bgpSocketPath,
@@ -534,9 +531,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		stopping:             stopping.Load,
 	}
 	mutationAdmission := serveMutationAdmission{mu: applyMu, stopping: &stopping, runtimeMutationError: chainRunner.RuntimeMutationError}
-	if *applyInterval > 0 {
-		go runApplySchedule(ctx, stop, *applyInterval, currentRouter, func() *controllerchain.Runner { return chainRunner }, applyOpts, stateStore, cache, logger, applyMu, &stopping)
-	}
 	if webConsoleResourcePresent(router) {
 		var webStore routerstate.Store
 		var webObjectStore routerstate.ObjectStatusStore
@@ -799,16 +793,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			}
 			logger.Emit(eventlog.LevelInfo, "serve", "log level override changed", map[string]string{"level": effective})
 			result := controlapi.NewLogLevelResult(effective)
-			return &result, nil
-		},
-		DHCPLeaseEvent: func(r *http.Request, req controlapi.DHCPLeaseEventRequest) (*controlapi.DHCPLeaseEventResult, error) {
-			if _, ok := daemonapi.DHCPLeaseEventType(req.Action); !ok {
-				return nil, controlapi.ErrBadRequest
-			}
-			if err := dhcpeventqueue.Store(r.Context(), platformDefaults.DHCPEventQueueFile(), req, time.Now().UTC()); err != nil {
-				return nil, err
-			}
-			result := controlapi.NewDHCPLeaseEventResult()
 			return &result, nil
 		},
 	}
@@ -2280,52 +2264,11 @@ func (a serveMutationAdmission) lock() (func(), error) {
 	return a.mu.Unlock, nil
 }
 
-func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.Duration, router func() *api.Router, runner func() *controllerchain.Runner, opts applyOptions, store *routerstate.SQLiteStore, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex, stopping *atomic.Bool) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			if stopping != nil && stopping.Load() {
-				return
-			}
-			applyMu.Lock()
-			if stopping != nil && stopping.Load() {
-				applyMu.Unlock()
-				return
-			}
-			chainRunner := runner()
-			if chainRunner != nil && chainRunner.RuntimeMutationError() != nil {
-				applyMu.Unlock()
-				return
-			}
-			result, err := runServeChainScheduledOnce(ctx, chainRunner, router(), opts, store, io.Discard, logger)
-			if err != nil {
-				var attemptErr *applyAttemptError
-				if errors.As(err, &attemptErr) {
-					cache.StoreAttempt(attemptErr.Outcome, err)
-				}
-				applyMu.Unlock()
-				logger.Emit(eventlog.LevelError, "serve", "scheduled apply failed", map[string]string{"error": err.Error()})
-				continue
-			}
-			cache.Store(result)
-			applyMu.Unlock()
-		}
-	}
-}
-
 func runServeChainOnce(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
-	return runServeChainOnceWith(ctx, runner, router, opts, store, stdout, logger, false)
+	return runServeChainOnceWith(ctx, runner, router, opts, store, stdout, logger)
 }
 
-func runServeChainScheduledOnce(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
-	return runServeChainOnceWith(ctx, runner, router, opts, store, stdout, logger, true)
-}
-
-func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger, scheduled bool) (result *apply.Result, err error) {
+func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger) (result *apply.Result, err error) {
 	outcome := applyAttemptOutcome{Stage: "prepare", Canonical: canonicalNotRequested}
 	defer func() {
 		outcome.Result = result
@@ -2339,8 +2282,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	}
 	var generation int64
 	generationCreated := false
-	// Scheduled observation reuses the current generation.
-	if !opts.DryRun && store != nil && !scheduled {
+	if !opts.DryRun && store != nil {
 		outcome.Stage = "begin-generation"
 		configYAML, err := routerConfigYAML(router, opts)
 		if err != nil {
@@ -2357,15 +2299,9 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 			return nil, err
 		}
 	}
-	var reconcileErr error
 	outcome.Stage = "reconcile"
-	if scheduled {
-		reconcileErr = runner.ReconcileScheduled(ctx)
-	} else {
-		reconcileErr = runner.ReconcileOnce(ctx)
-	}
-	if reconcileErr != nil {
-		return nil, reconcileErr
+	if err := runner.ReconcileOnce(ctx); err != nil {
+		return nil, err
 	}
 	outcome.Stage = "observe"
 	engine := apply.New()

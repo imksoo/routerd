@@ -9,7 +9,7 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
+func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
 	defaults, _ := platform.Current()
 	path := spec.Path
 	if path == "" {
@@ -19,20 +19,13 @@ func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.S
 	if group == 0 {
 		group = 1
 	}
-	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--nflog-group", strconv.Itoa(group)}
-	wants := []string{"network-online.target"}
-	after := []string{"network-online.target"}
-	if dpiSocket != "" {
-		exec = append(exec, "--dpi-socket", dpiSocket)
-		wants = append(wants, "routerd-dpi-classifier.service")
-		after = append(after, "routerd-dpi-classifier.service")
-	}
+	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--nflog-group", strconv.Itoa(group), "--dpi-socket", "/run/routerd/ndpi-agent/default.sock"}
 	noNewPrivileges := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd firewall log collector",
 		ExecStart:                exec,
-		Wants:                    wants,
-		After:                    after,
+		Wants:                    []string{"network-online.target", NDPIAgentUnitName},
+		After:                    []string{"network-online.target", NDPIAgentUnitName},
 		Restart:                  "always",
 		RestartSec:               "5s",
 		RuntimeDirectory:         []string{"routerd"},

@@ -16,9 +16,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
-	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -178,40 +176,6 @@ func TestConfigGenerationHashIncludesEffectiveRouter(t *testing.T) {
 	}
 	if firstHash == secondHash {
 		t.Fatalf("effective-router change did not change generation hash: %s", firstHash)
-	}
-}
-
-func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
-	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
-	if err != nil {
-		t.Fatalf("open state: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "scheduled-reconcile-router"}}
-	runner := &controllerchain.Runner{Router: router, Bus: bus.New(), Store: store, Opts: controllerchain.Options{EnabledControllers: []string{"log-retention"}}}
-	initialOpts := applyOptions{ConfigYAMLOverride: testRouterYAML("scheduled-reconcile-router")}
-	if _, err := runServeChainOnce(context.Background(), runner, router, initialOpts, store, io.Discard, nil); err != nil {
-		t.Fatalf("initial reconcile: %v", err)
-	}
-	before := store.LatestGeneration()
-	if before == 0 {
-		t.Fatal("initial reconcile did not create a generation")
-	}
-	unchanged, err := runServeChainOnce(context.Background(), runner, router, initialOpts, store, io.Discard, nil)
-	if err != nil {
-		t.Fatalf("unchanged reconcile: %v", err)
-	}
-	if unchanged.Generation != before {
-		t.Fatalf("unchanged reconcile result generation = %d, want %d", unchanged.Generation, before)
-	}
-	if got := store.LatestGeneration(); got != before {
-		t.Fatalf("generation after unchanged reconcile = %d, want %d", got, before)
-	}
-	if _, err := runServeChainScheduledOnce(context.Background(), runner, router, applyOptions{ConfigPath: filepath.Join(t.TempDir(), "changed-after-boot.yaml")}, store, io.Discard, nil); err != nil {
-		t.Fatalf("scheduled reconcile: %v", err)
-	}
-	if got := store.LatestGeneration(); got != before {
-		t.Fatalf("generation after scheduled reconcile = %d, want %d", got, before)
 	}
 }
 

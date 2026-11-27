@@ -143,7 +143,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, `usage: routerd-ndpi-agent [daemon|selftest] [options]
 
 Runs the optional nDPI analysis service for routerd. This process owns DPI flow
-state and exposes a Unix-socket API used by routerd-dpi-classifier. The default
+state and exposes a Unix-socket API used by routerd-firewall-logger. The default
 build provides the service boundary without native classification; libndpi-backed
 classification is enabled by building with CGO and the libndpi build tag.`)
 }
@@ -253,7 +253,7 @@ func (a *agent) Status() statusResponse {
 	backend := a.backend.Status()
 	stats := a.snapshotStats(time.Now().UTC())
 	return statusResponse{
-		// A reachable agent without its classifier must not report a healthy DPI
+		// A reachable agent without its native backend must not report a healthy DPI
 		// capability.  FreeBSD currently uses the explicit unavailable backend.
 		OK:             backend.Loaded,
 		Name:           a.opts.name,

@@ -5,7 +5,10 @@ slug: /operations/state-database
 
 # 状態データベース
 
-routerd は状態とイベントを SQLite に永続化します。各デーモンはこれに加えて、自身のリースまたは状態ファイルとイベントログを持ちます。
+routerdは状態とイベントをSQLiteに永続化します。プロトコルクライアントは再開に
+必要なリースまたは状態ファイルを持ちます。ARP・DHCPクライアント・PPPoE・
+healthcheckデーモンはプロトコルイベントも保存します。DNSリゾルバーとRA observer
+の状態は`/v1/status`から読み取り、重複する副ファイルは持ちません。
 
 ## 主なパス
 
@@ -16,7 +19,7 @@ routerd は状態とイベントを SQLite に永続化します。各デーモ�
 | DHCPv4 リース | `/var/lib/routerd/dhcpv4-client/<name>/lease.json` |
 | PPPoE 状態 | `/var/lib/routerd/pppoe-client/<name>/state.json` |
 | HealthCheck 状態 | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| デーモン別イベント | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
+| プロトコルイベント（ARP・DHCPクライアント・PPPoE・HealthCheck） | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
 ## events テーブル
 

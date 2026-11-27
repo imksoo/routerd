@@ -56,7 +56,7 @@
 
 | YAML | 指定要求 | 类型与限制 | 字段含义与默认值 |
 | --- | --- | --- | --- |
-| `spec.enabled` | *选填* | boolean | 默认 false。true 请求收集服务并启用组日志选项；当前服务生成也会请求 DPI 分类辅助程序。 |
+| `spec.enabled` | *选填* | boolean | 默认 false。true 启动防火墙日志收集服务和直接分类数据包的 nDPI 代理程序。 |
 | `spec.path` | **条件必填** | string | 可选 SQLite 数据库路径。Linux 默认 /var/lib/routerd/firewall-logs.db，FreeBSD 为 /var/db/routerd/firewall-logs.db。这是数据库，不是逐行 JSON 文件。 |
 | `spec.events` | *选填* | array | 接受 deny、allow、rateLimit、connLimit，默认空。当前仅验证，不筛选收集输入或生成的防火墙日志。 |
 | `spec.fromZones` | *选填* | array | 默认空。源区域须为 FirewallZone 名称或 self，但运行时不作日志筛选。 |

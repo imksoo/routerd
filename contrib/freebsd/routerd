@@ -38,7 +38,6 @@ load_rc_config "$name"
 : "${routerd_config:=/usr/local/etc/routerd/router.yaml}"
 : "${routerd_socket:=/var/run/routerd/routerd.sock}"
 : "${routerd_status_socket:=/var/run/routerd/routerd-status.sock}"
-: "${routerd_apply_interval:=60s}"
 : "${routerd_log:=/var/log/routerd.log}"
 : "${routerd_user:=root}"
 : "${routerd_flags:=}"
@@ -51,7 +50,6 @@ command_args="-P ${supervisor_pidfile} -p ${pidfile} -r -t ${name} -o ${routerd_
     --config ${routerd_config} \
     --socket ${routerd_socket} \
     --status-socket ${routerd_status_socket} \
-    --apply-interval ${routerd_apply_interval} \
     ${routerd_flags} >/dev/null 2>&1"
 
 start_precmd="routerd_prestart"

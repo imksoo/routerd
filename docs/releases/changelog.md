@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+- Remove the unused scheduled-apply option, duplicate DNS resolver and RA observer side state/event histories, the DHCP relay direct socket/API path, the legacy in-process healthcheck runner, and the separate DPI classifier process. Keep daemon live status, durable DHCP callback recovery, standalone healthcheck units, and direct ndpi-agent classification.
+
 ## v20261127.1548
 
 - The DNS resolver treats unexpected listener exits and failures to send responses as errors, records events outside the cache lock, and logs upstream healthy or down events only when the state changes.

@@ -5,7 +5,9 @@ slug: /operations/state-database
 
 # 狀態資料庫
 
-routerd 將狀態與事件持久化至 SQLite。每個常駐程式除此之外還各自擁有自身的租約或狀態檔案與事件日誌。
+routerd 將狀態與事件持久化至 SQLite。協定用戶端保留恢復運作所需的租約或狀態檔案。
+ARP、DHCP 用戶端、PPPoE 及 healthcheck 常駐程式還會儲存協定事件。DNS 解析器與
+RA observer 的狀態透過 `/v1/status` 即時讀取，不保留重複的旁路檔案。
 
 ## 主要路徑
 
@@ -16,7 +18,7 @@ routerd 將狀態與事件持久化至 SQLite。每個常駐程式除此之外�
 | DHCPv4 租約 | `/var/lib/routerd/dhcpv4-client/<name>/lease.json` |
 | PPPoE 狀態 | `/var/lib/routerd/pppoe-client/<name>/state.json` |
 | HealthCheck 狀態 | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| 常駐程式別事件 | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
+| 協定事件（ARP、DHCP 用戶端、PPPoE、HealthCheck） | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
 ## events 資料表
 

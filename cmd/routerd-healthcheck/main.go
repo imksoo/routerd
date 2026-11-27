@@ -527,6 +527,9 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 	if !d.state.FirstFailureTime.IsZero() {
 		observed["firstFailureTime"] = d.state.FirstFailureTime.UTC().Format(time.RFC3339Nano)
 	}
+	if d.state.LastResult != healthcheck.ResultPassed && d.state.LastMessage != "" {
+		observed["message"] = d.state.LastMessage
+	}
 	if ev := d.state.LastEvidence; ev != (healthcheck.ProbeEvidence{}) {
 		if ev.FailureKind != "" {
 			observed["failureKind"] = ev.FailureKind

@@ -263,20 +263,6 @@ type DHCPv6EventResult struct {
 	Resource string `json:"resource" yaml:"resource"`
 }
 
-type DHCPLeaseEventRequest struct {
-	TypeMeta  `json:",inline" yaml:",inline"`
-	Action    string `json:"action" yaml:"action"`
-	MAC       string `json:"mac,omitempty" yaml:"mac,omitempty"`
-	IP        string `json:"ip" yaml:"ip"`
-	Hostname  string `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	Interface string `json:"interface,omitempty" yaml:"interface,omitempty"`
-}
-
-type DHCPLeaseEventResult struct {
-	TypeMeta `json:",inline" yaml:",inline"`
-	Accepted bool `json:"accepted" yaml:"accepted"`
-}
-
 type ConnectionTable struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Metadata ObjectMeta              `json:"metadata" yaml:"metadata"`
@@ -669,13 +655,6 @@ func NewLogLevelResult(level string) LogLevelResult {
 	return LogLevelResult{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "LogLevelResult"},
 		Level:    level,
-	}
-}
-
-func NewDHCPLeaseEventResult() DHCPLeaseEventResult {
-	return DHCPLeaseEventResult{
-		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCPLeaseEventResult"},
-		Accepted: true,
 	}
 }
 

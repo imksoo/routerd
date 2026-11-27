@@ -42,7 +42,7 @@ func (flags applyFlagValues) applyOptions(configPath string) applyOptions {
 		StatusFile:          *flags.StatusFile,
 		NetplanPath:         *flags.NetplanPath,
 		DnsmasqConfigPath:   *flags.DnsmasqConfigPath,
-		DnsmasqServicePath:  runtimeDnsmasqServicePath(*flags.DnsmasqServicePath),
+		DnsmasqServicePath:  *flags.DnsmasqServicePath,
 		NftablesPath:        *flags.NftablesPath,
 		StatePath:           *flags.StatePath,
 		DryRun:              *flags.DryRun,

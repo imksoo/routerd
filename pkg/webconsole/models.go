@@ -102,15 +102,13 @@ type GatewayHealthComponent struct {
 }
 
 type DPIStatus struct {
-	Classifier *DPIServiceStatus `json:"classifier,omitempty"`
-	Agent      *DPIServiceStatus `json:"agent,omitempty"`
+	Agent *DPIServiceStatus `json:"agent,omitempty"`
 }
 
 type DPIServiceStatus struct {
 	Available      bool           `json:"available"`
 	Socket         string         `json:"socket,omitempty"`
 	Engine         string         `json:"engine,omitempty"`
-	ActiveEngine   string         `json:"activeEngine,omitempty"`
 	LibNDPILoaded  bool           `json:"libndpiLoaded,omitempty"`
 	LibNDPIVersion string         `json:"libndpiVersion,omitempty"`
 	Reason         string         `json:"reason,omitempty"`

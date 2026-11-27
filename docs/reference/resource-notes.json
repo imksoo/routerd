@@ -2641,10 +2641,10 @@
     ],
     "fields": {
       "enabled": [
-        "Default false; true requests the collector service and enables grouped logging options. Also requests the DPI classifier helper in the current service renderer.",
-        "既定falseです。trueで収集サービスとグループログ設定を有効にし、現行のサービス描画ではDPI分類ヘルパーも要求します。",
-        "預設 false。true 要求收集服務並啟用群組紀錄選項；目前服務產生也會要求 DPI 分類輔助程式。",
-        "默认 false。true 请求收集服务并启用组日志选项；当前服务生成也会请求 DPI 分类辅助程序。"
+        "Default false; true starts the firewall log collector and the nDPI agent used for direct packet classification.",
+        "既定falseです。trueでファイアウォールログ収集サービスと、パケットを直接分類するnDPIエージェントを起動します。",
+        "預設 false。true 啟動防火牆記錄收集服務及直接分類封包的 nDPI 代理程式。",
+        "默认 false。true 启动防火墙日志收集服务和直接分类数据包的 nDPI 代理程序。"
       ],
       "path": [
         "Optional SQLite database path. Default /var/lib/routerd/firewall-logs.db on Linux and /var/db/routerd/firewall-logs.db on FreeBSD. This is a database, not a JSON-lines output file.",
@@ -4291,16 +4291,16 @@
         "仅接受省略或 conntrack，实际标签默认 conntrack。不用于选择其他采集器或任意后端名称。"
       ],
       "includeApplicationLayer": [
-        "Default false. With enabled true, requests DPI helper services and Linux DPI observation rules. Also includes applicationLayer availability/status from the nDPI agent in resource status; it does not guarantee libndpi is loaded or classification exists.",
-        "既定はfalseです。enabledとともにtrueにするとDPIヘルパーとLinuxのDPI観測ルールを要求し、nDPIエージェントの利用可否をapplicationLayerとして状態に記録します。libndpiのロードや分類結果の存在は保証しません。",
-        "預設 false。與 enabled 同為 true 時要求 DPI 輔助服務及 Linux DPI 觀察規則，並在資源狀態的 applicationLayer 記錄 nDPI 可用性。不保證 libndpi 載入或分類存在。",
-        "默认 false。与 enabled 同为 true 时请求 DPI 辅助服务及 Linux DPI 观察规则，并在资源状态的 applicationLayer 记录 nDPI 可用性。不保证 libndpi 加载或分类存在。"
+        "Default false. With enabled true, adds Linux DPI observation rules when FirewallEventLog is also enabled and reports the shared nDPI agent in applicationLayer status. It does not start DPI services by itself or guarantee classification.",
+        "既定はfalseです。enabledとともにtrueにすると、FirewallEventLogも有効な場合にLinuxのDPI観測ルールを追加し、共有nDPIエージェントの状態をapplicationLayerに記録します。この項目だけではDPIサービスを起動せず、分類結果も保証しません。",
+        "預設 false。與 enabled 同為 true 時，僅在 FirewallEventLog 也啟用時新增 Linux DPI 觀察規則，並在 applicationLayer 狀態記錄共用 nDPI 代理程式。此項目本身不啟動 DPI 服務，也不保證分類結果。",
+        "默认 false。与 enabled 同为 true 时，仅在 FirewallEventLog 也启用时添加 Linux DPI 观察规则，并在 applicationLayer 状态记录共享 nDPI 代理程序。此字段本身不启动 DPI 服务，也不保证分类结果。"
       ],
       "includeTLSSNI": [
-        "Default false. With enabled true, requests the same DPI helpers/observation path. Not a TLS decryption option, guaranteed SNI capture, or a separate storage redaction/filter switch; encrypted/unobserved names may remain unavailable.",
-        "既定はfalseです。enabledとともにtrueにすると同じDPIヘルパー・観測経路を要求します。TLS復号やSNI取得の保証、保存内容の独立した秘匿化・フィルタースイッチではなく、暗号化・未観測の名前は取得できない場合があります。",
-        "預設 false。與 enabled 同為 true 時要求相同 DPI 輔助程式及觀察流程。不是 TLS 解密、SNI 擷取保證或獨立儲存遮蔽／篩選開關；加密或未觀察到的名稱可能不可用。",
-        "默认 false。与 enabled 同为 true 时请求相同 DPI 辅助程序及观察流程。不是 TLS 解密、SNI 采集保证或独立存储脱敏／过滤开关；加密或未观察到的名称可能不可用。"
+        "Default false. With enabled true, requests the same FirewallEventLog-backed observation path. It does not start DPI services, decrypt TLS, guarantee SNI capture, or independently control stored-field redaction.",
+        "既定はfalseです。enabledとともにtrueにすると、FirewallEventLogを使う同じ観測経路を要求します。DPIサービスの起動、TLS復号、SNI取得、保存項目の秘匿化を独立して制御する項目ではありません。",
+        "預設 false。與 enabled 同為 true 時，要求使用 FirewallEventLog 的相同觀察流程。此項目不會啟動 DPI 服務、解密 TLS、保證擷取 SNI，或獨立控制儲存欄位的遮蔽。",
+        "默认 false。与 enabled 同为 true 时，请求使用 FirewallEventLog 的同一观察流程。此字段不会启动 DPI 服务、解密 TLS、保证采集 SNI，或独立控制存储字段的脱敏。"
       ]
     },
     "sources": [

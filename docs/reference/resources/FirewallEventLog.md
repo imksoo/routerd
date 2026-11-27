@@ -56,7 +56,7 @@ Required children of optional objects apply only when their parent is used. Othe
 
 | YAML | Presence | Type / constraints | Field meaning and default |
 | --- | --- | --- | --- |
-| `spec.enabled` | *Optional* | boolean | Default false; true requests the collector service and enables grouped logging options. Also requests the DPI classifier helper in the current service renderer. |
+| `spec.enabled` | *Optional* | boolean | Default false; true starts the firewall log collector and the nDPI agent used for direct packet classification. |
 | `spec.path` | **Conditionally required** | string | Optional SQLite database path. Default /var/lib/routerd/firewall-logs.db on Linux and /var/db/routerd/firewall-logs.db on FreeBSD. This is a database, not a JSON-lines output file. |
 | `spec.events` | *Optional* | array | Accepted values deny, allow, rateLimit, connLimit; default empty. Currently validated but not used to filter collector input or generated firewall logging. |
 | `spec.fromZones` | *Optional* | array | Default empty. Source-zone references validated against FirewallZone names or self, but not used as a logging filter at runtime. |

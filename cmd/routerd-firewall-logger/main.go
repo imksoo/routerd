@@ -247,21 +247,20 @@ func (w *firewallLogWriter) flush(ctx context.Context) error {
 }
 
 type options struct {
-	path                string
-	group               int
-	inputFile           string
-	inputFormat         string
-	pflogInterface      string
-	tcpdumpPath         string
-	dpiSocket           string
-	dpiTimeout          time.Duration
-	conntrackEvents     bool
-	conntrackPath       string
-	expiredFlowTTL      time.Duration
-	expiredFlowLimit    int
-	dpiFlowTTL          time.Duration
-	dpiFlowLimit        int
-	dpiFlowFirstPackets int
+	path             string
+	group            int
+	inputFile        string
+	inputFormat      string
+	pflogInterface   string
+	tcpdumpPath      string
+	dpiSocket        string
+	dpiTimeout       time.Duration
+	conntrackEvents  bool
+	conntrackPath    string
+	expiredFlowTTL   time.Duration
+	expiredFlowLimit int
+	dpiFlowTTL       time.Duration
+	dpiFlowLimit     int
 }
 
 func parseOptions(name string, args []string) (options, error) {
@@ -275,15 +274,14 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.inputFormat, "input-format", "auto", "input format: auto, json, kv, nflog-tcpdump, pflog-tcpdump")
 	fs.StringVar(&opts.pflogInterface, "pflog-interface", "", "read FreeBSD pflog directly from this interface")
 	fs.StringVar(&opts.tcpdumpPath, "tcpdump", "tcpdump", "deprecated; tcpdump is no longer used for pflog input")
-	fs.StringVar(&opts.dpiSocket, "dpi-socket", "", "optional routerd-dpi-classifier Unix socket")
-	fs.DurationVar(&opts.dpiTimeout, "dpi-timeout", 500*time.Millisecond, "DPI classifier request timeout")
+	fs.StringVar(&opts.dpiSocket, "dpi-socket", "", "optional routerd-ndpi-agent Unix socket")
+	fs.DurationVar(&opts.dpiTimeout, "dpi-timeout", 500*time.Millisecond, "nDPI agent request timeout")
 	fs.BoolVar(&opts.conntrackEvents, "conntrack-events", true, "watch conntrack destroy events for orphan return correlation")
 	fs.StringVar(&opts.conntrackPath, "conntrack", "conntrack", "conntrack command path")
 	fs.DurationVar(&opts.expiredFlowTTL, "expired-flow-ttl", time.Hour, "expired flow ring retention")
 	fs.IntVar(&opts.expiredFlowLimit, "expired-flow-limit", 100000, "maximum expired flow ring entries")
 	fs.DurationVar(&opts.dpiFlowTTL, "dpi-flow-ttl", time.Hour, "DPI flow cache retention")
 	fs.IntVar(&opts.dpiFlowLimit, "dpi-flow-limit", 100000, "maximum DPI flow cache entries")
-	fs.IntVar(&opts.dpiFlowFirstPackets, "dpi-flow-first-packets", 10, "skip forward DPI classification after this many cached packets per flow")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -369,10 +367,6 @@ func shouldClassifyForwardDPI(ctx context.Context, log *logstore.FirewallLog, en
 	if !isAcceptAction(entry.Action) || opts.dpiSocket == "" {
 		return false
 	}
-	limit := opts.dpiFlowFirstPackets
-	if limit <= 0 {
-		limit = 10
-	}
 	flow, ok, err := log.FindDPIFlowForFirewallEntry(ctx, entry, now, opts.dpiFlowTTL)
 	if err != nil || !ok {
 		return true
@@ -380,7 +374,7 @@ func shouldClassifyForwardDPI(ctx context.Context, log *logstore.FirewallLog, en
 	if flow.AppName != "" && flow.AppName != "unknown" {
 		return false
 	}
-	return flow.PacketCount < limit
+	return flow.PacketCount < 10
 }
 
 func enrichEntryWithDPIFlow(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, opts options, now time.Time) logstore.FirewallLogEntry {
@@ -890,7 +884,7 @@ func classifyPacket(ctx context.Context, socket string, timeout time.Duration, p
 		}},
 	}
 	defer client.CloseIdleConnections()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/classify", bytes.NewReader(request))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/observe-packet", bytes.NewReader(request))
 	if err != nil {
 		return dpi.ClassifyResult{}, err
 	}
@@ -901,7 +895,7 @@ func classifyPacket(ctx context.Context, socket string, timeout time.Duration, p
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return dpi.ClassifyResult{}, fmt.Errorf("dpi classifier status %s", resp.Status)
+		return dpi.ClassifyResult{}, fmt.Errorf("ndpi agent status %s", resp.Status)
 	}
 	var result dpi.ClassifyResult
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {

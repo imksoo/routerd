@@ -138,3 +138,11 @@ routerctl describe DHCPv4ServerLeaseSync/lan-v4-leases
 當節點不是 master 時，`routerd serve` 會根據 `spec.when` 排除此
 resource。當節點是 master 且 lease 檔案存在時，status 會進入 `Synced`。
 如果 lease 檔案尚不存在，則保持 `Pending` 直到 dnsmasq 建立。
+
+## 在 routerd 重新啟動期間保留通知
+
+受管理的 dnsmasq hook 不帶附加參數呼叫 `routerd-dhcp-event-relay`。relay 將每筆
+通知寫入 `<platform StateDir>/dhcp-events/pending.db` 後結束，`routerd serve` 在
+controller 啟動後依儲存順序讀取。Linux 使用 `/var/lib/routerd`，FreeBSD 使用
+`/var/db/routerd`。relay 一律使用此持久佇列，不提供直接傳送至 socket 或 Control API
+的路徑。儲存失敗或佇列達到上限不會視為成功，而是透過結束狀態回傳給 dnsmasq。

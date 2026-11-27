@@ -8,7 +8,8 @@ sidebar_position: 5
 
 routerd は、宣言した意図と観測した状態を分けて扱います。
 YAML は、利用者が管理する意図です。
-SQLite、lease ファイル、events.jsonl は、routerd と専用デーモンが観測した状態です。
+SQLite、leaseファイル、一部デーモンのイベントログは、routerdと専用デーモンが
+観測した状態です。
 
 
 ## 状態の置き場所
@@ -40,8 +41,11 @@ FreeBSD でも、設定と実行ファイルは `/usr/local` 配下に置きま�
 
 ## イベント
 
-routerd と専用デーモンは、状態の変化をイベントとして記録します。
-イベントは、SQLite の `events` テーブルやデーモンごとの `events.jsonl` に残ります。
+routerdと専用デーモンは、状態の変化をイベントとして記録します。
+routerdはイベントストリームをSQLiteの`events`テーブルに保存します。
+ARP・DHCPクライアント・PPPoE・healthcheckデーモンは、プロトコルイベントを
+`events.jsonl`にも保存します。DNSリゾルバーとRA observerの状態は
+`/v1/status`から読み取り、重複する状態・イベント副ファイルは持ちません。
 EventRule と DerivedEvent は、このイベントや状態を使って仮想的な状態変化を作り出します。
 
 ## 適用世代

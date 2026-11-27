@@ -13,12 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/imksoo/routerd/pkg/controlapi"
 )
 
-func lease(action string) controlapi.DHCPLeaseEventRequest {
-	return controlapi.DHCPLeaseEventRequest{Action: action, MAC: "02:00:00:00:00:42", IP: "192.0.2.42", Hostname: "fixture", Interface: "test0"}
+func lease(action string) LeaseEvent {
+	return LeaseEvent{Action: action, MAC: "02:00:00:00:00:42", IP: "192.0.2.42", Hostname: "fixture", Interface: "test0"}
 }
 func openQueue(t *testing.T, path string) *Queue {
 	t.Helper()

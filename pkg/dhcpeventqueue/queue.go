@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -29,9 +28,17 @@ const (
 var ErrFull = errors.New("DHCP event queue is full")
 
 type Event struct {
-	Sequence   int64                            `json:"sequence"`
-	ObservedAt time.Time                        `json:"observedAt"`
-	Lease      controlapi.DHCPLeaseEventRequest `json:"lease"`
+	Sequence   int64      `json:"sequence"`
+	ObservedAt time.Time  `json:"observedAt"`
+	Lease      LeaseEvent `json:"lease"`
+}
+
+type LeaseEvent struct {
+	Action    string `json:"action"`
+	MAC       string `json:"mac,omitempty"`
+	IP        string `json:"ip"`
+	Hostname  string `json:"hostname,omitempty"`
+	Interface string `json:"interface,omitempty"`
 }
 
 type Queue struct {
@@ -110,7 +117,7 @@ func (q *Queue) Close() error { return q.db.Close() }
 
 // Enqueue returns success only after SQLite has committed the callback. The
 // capacity check and insertion share an IMMEDIATE transaction across producers.
-func (q *Queue) Enqueue(ctx context.Context, lease controlapi.DHCPLeaseEventRequest, at time.Time) error {
+func (q *Queue) Enqueue(ctx context.Context, lease LeaseEvent, at time.Time) error {
 	if _, ok := daemonapi.DHCPLeaseEventType(lease.Action); !ok || lease.IP == "" || at.IsZero() {
 		return errors.New("invalid DHCP event")
 	}
@@ -150,7 +157,7 @@ func (q *Queue) Enqueue(ctx context.Context, lease controlapi.DHCPLeaseEventRequ
 // Store retries transient SQLite contention within one operation budget,
 // including opening/initialization. Each failed attempt is rolled back and
 // closed before retrying; observation time is never replaced by retry time.
-func Store(ctx context.Context, path string, lease controlapi.DHCPLeaseEventRequest, at time.Time) error {
+func Store(ctx context.Context, path string, lease LeaseEvent, at time.Time) error {
 	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
 	defer cancel()
 	for {
@@ -174,7 +181,7 @@ func Store(ctx context.Context, path string, lease controlapi.DHCPLeaseEventRequ
 	}
 }
 
-func storeOnce(ctx context.Context, path string, lease controlapi.DHCPLeaseEventRequest, at time.Time) error {
+func storeOnce(ctx context.Context, path string, lease LeaseEvent, at time.Time) error {
 	q, err := Open(ctx, path)
 	if err != nil {
 		return fmt.Errorf("open DHCP event queue: %w", err)

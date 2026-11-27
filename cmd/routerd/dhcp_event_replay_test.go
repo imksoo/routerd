@@ -10,7 +10,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
-	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dhcpeventqueue"
 	"github.com/imksoo/routerd/pkg/logstore"
@@ -39,7 +38,7 @@ func TestHistoricalCallbacksRequireCurrentAuthoritativeLease(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tt.data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			got, err := dhcpReplayDisposition(router, "/unselected/fallback", controlapi.DHCPLeaseEventRequest{Action: tt.action, MAC: tt.mac, IP: tt.ip, Hostname: tt.hostname}, now)
+			got, err := dhcpReplayDisposition(router, "/unselected/fallback", dhcpeventqueue.LeaseEvent{Action: tt.action, MAC: tt.mac, IP: tt.ip, Hostname: tt.hostname}, now)
 			if (err != nil) != tt.bad || got != tt.want {
 				t.Fatalf("got %q %v, want %q bad=%v", got, err, tt.want, tt.bad)
 			}
@@ -48,7 +47,7 @@ func TestHistoricalCallbacksRequireCurrentAuthoritativeLease(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dhcpReplayDisposition(router, path, controlapi.DHCPLeaseEventRequest{Action: "removed", IP: "192.0.2.42"}, now); err == nil {
+	if _, err := dhcpReplayDisposition(router, path, dhcpeventqueue.LeaseEvent{Action: "removed", IP: "192.0.2.42"}, now); err == nil {
 		t.Fatal("missing authority treated as empty lease list")
 	}
 }
@@ -62,7 +61,7 @@ func TestOriginalObservationTimePersistsInActualJournalAndZeroHoldDoesNotReserve
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 10, 1, 1, 2, 3, 456789, time.UTC)
-	e := dhcpeventqueue.Event{ObservedAt: at, Lease: controlapi.DHCPLeaseEventRequest{Action: "removed", MAC: "02:00:00:00:00:42", IP: "192.0.2.42"}}
+	e := dhcpeventqueue.Event{ObservedAt: at, Lease: dhcpeventqueue.LeaseEvent{Action: "removed", MAC: "02:00:00:00:00:42", IP: "192.0.2.42"}}
 	if err := processDHCPLeaseEventDisposition(context.Background(), e, stickyPath, 0, bus.NewWithStore(store), "", false); err != nil {
 		t.Fatal(err)
 	}

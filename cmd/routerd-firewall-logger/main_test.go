@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/logstore"
 )
 
@@ -207,81 +206,6 @@ func TestAcceptDPIFlowEnrichesLaterDeny(t *testing.T) {
 	deny = enrichEntryWithDPIFlow(context.Background(), log, deny, opts, now)
 	if deny.DPIApp != "tls" || deny.DPITLSSNI != "cached.example" || !strings.Contains(deny.Hint, "prior TLS-SNI=cached.example flow") {
 		t.Fatalf("deny = %+v", deny)
-	}
-}
-
-func TestShouldClassifyForwardDPISkipsKnownFlow(t *testing.T) {
-	log, err := logstore.OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer log.Close()
-	opts := options{dpiSocket: "/tmp/dpi.sock", dpiFlowTTL: time.Hour, dpiFlowLimit: 100000, dpiFlowFirstPackets: 10}
-	entry := logstore.FirewallLogEntry{
-		Action:     "accept",
-		SrcAddress: "172.18.0.10",
-		SrcPort:    53168,
-		DstAddress: "198.51.100.10",
-		DstPort:    443,
-		Protocol:   "tcp",
-		L3Proto:    "ipv4",
-	}
-	if !shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
-		t.Fatal("empty cache should classify")
-	}
-	entry.DPIApp = "tls"
-	entry.DPITLSSNI = "cached.example"
-	if err := recordDPIFlowFromEntry(context.Background(), log, entry, opts); err != nil {
-		t.Fatal(err)
-	}
-	entry.DPIApp = ""
-	entry.DPITLSSNI = ""
-	if shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
-		t.Fatal("known cached flow should not be classified again")
-	}
-}
-
-func TestShouldClassifyForwardDPIStopsAfterUnknownPacketBudget(t *testing.T) {
-	log, err := logstore.OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer log.Close()
-	opts := options{dpiSocket: "/tmp/dpi.sock", dpiFlowTTL: time.Hour, dpiFlowLimit: 100000, dpiFlowFirstPackets: 2}
-	entry := logstore.FirewallLogEntry{
-		Timestamp:  time.Now().UTC(),
-		Action:     "accept",
-		SrcAddress: "172.18.0.10",
-		SrcPort:    53168,
-		DstAddress: "198.51.100.10",
-		DstPort:    443,
-		Protocol:   "tcp",
-		L3Proto:    "ipv4",
-		Hint: appendDPIHintFields("", dpi.ClassifyResult{
-			AppName: "unknown",
-			Engine:  "builtin",
-			Source:  "builtin",
-			Reason:  "no_application_signal",
-		}),
-	}
-	if err := recordFirewallEntryWithRecorder(context.Background(), log, log, entry, nil, opts); err != nil {
-		t.Fatal(err)
-	}
-	if !shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
-		t.Fatal("unknown flow below packet budget should still classify")
-	}
-	if err := recordFirewallEntryWithRecorder(context.Background(), log, log, entry, nil, opts); err != nil {
-		t.Fatal(err)
-	}
-	if shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
-		t.Fatal("unknown flow at packet budget should stop classification")
-	}
-	flow, ok, err := log.FindDPIFlowForFirewallEntry(context.Background(), entry, time.Now().UTC(), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok || flow.AppName != "unknown" || flow.PacketCount != 2 || flow.Metadata["reason"] != "no_application_signal" {
-		t.Fatalf("flow ok=%v flow=%+v", ok, flow)
 	}
 }
 

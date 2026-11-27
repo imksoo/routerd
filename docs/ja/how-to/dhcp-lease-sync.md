@@ -140,6 +140,15 @@ node が master ではない場合、`routerd serve` は `spec.when` により�
 除外します。master で lease file が存在する場合、status は `Synced` へ進みます。
 lease file がまだ無い場合は、dnsmasq が作成するまで `Pending` のままです。
 
+## routerd再起動中の通知の保持
+
+管理対象のdnsmasqフックは、追加引数なしで`routerd-dhcp-event-relay`を呼びます。
+relayは各通知を`<platform StateDir>/dhcp-events/pending.db`へ保存してから終了し、
+`routerd serve`がコントローラー起動後に保存順で取り込みます。Linuxでは
+`/var/lib/routerd`、FreeBSDでは`/var/db/routerd`を使います。relayは常にこの
+永続キューを使い、ソケットやControl APIへ直接送る経路は持ちません。
+保存失敗やキュー上限への到達は成功扱いにせず、終了コードでdnsmasqへ返します。
+
 ## 復旧した同期失敗の調査
 
 3種類のリース同期では、既存のサービスログへ `DHCP lease synchronization failed` を記録します。

@@ -25,7 +25,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dnsresolver"
-	"github.com/imksoo/routerd/pkg/eventfile"
 	"github.com/imksoo/routerd/pkg/logstore"
 )
 
@@ -33,8 +32,6 @@ type options struct {
 	resource   string
 	configFile string
 	socketPath string
-	stateFile  string
-	eventFile  string
 	dryRun     bool
 }
 
@@ -45,12 +42,9 @@ type daemon struct {
 	phase     string
 	health    string
 
-	mu         sync.Mutex
-	cond       *sync.Cond
-	events     []daemonapi.DaemonEvent
-	nextCursor uint64
-	cancel     context.CancelFunc
-	runCtx     context.Context
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	runCtx context.Context
 
 	stateMu      sync.RWMutex
 	reloadMu     sync.Mutex
@@ -111,11 +105,6 @@ type resolveResult struct {
 	ResponseCode string
 }
 
-type eventsResponse struct {
-	Cursor string                  `json:"cursor,omitempty"`
-	Events []daemonapi.DaemonEvent `json:"events"`
-}
-
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -145,20 +134,12 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.resource, "resource", "resolver", "resource name")
 	fs.StringVar(&opts.configFile, "config-file", "", "resolver runtime config JSON")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
-	fs.StringVar(&opts.stateFile, "state-file", "", "state JSON path")
-	fs.StringVar(&opts.eventFile, "event-file", "", "event JSONL path")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "validate config but do not listen")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
 	if opts.socketPath == "" {
 		opts.socketPath = filepath.Join("/run/routerd/dns-resolver", opts.resource+".sock")
-	}
-	if opts.stateFile == "" {
-		opts.stateFile = filepath.Join("/var/lib/routerd/dns-resolver", opts.resource, "state.json")
-	}
-	if opts.eventFile == "" {
-		opts.eventFile = filepath.Join("/var/lib/routerd/dns-resolver", opts.resource, "events.jsonl")
 	}
 	return opts, nil
 }
@@ -211,7 +192,7 @@ func daemonCommand(args []string) error {
 				switch sig {
 				case syscall.SIGHUP:
 					if _, err := d.reload(ctx); err != nil {
-						d.publish("routerd.dns.resolver.reload.failed", daemonapi.SeverityWarning, "ReloadFailed", err.Error(), nil)
+						fmt.Fprintf(os.Stderr, "routerd-dns-resolver: reload: %v\n", err)
 					}
 				default:
 					cancel()
@@ -262,7 +243,6 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 		listeners: map[string]*boundListener{},
 		serveErr:  make(chan dnsServeError, 1),
 	}
-	d.cond = sync.NewCond(&d.mu)
 	d.zones = newZoneTable(config.Zones)
 	sources, err := buildRuntimeSources(config)
 	if err != nil {
@@ -304,12 +284,6 @@ func (d *daemon) Run(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(d.opts.stateFile), 0o755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(d.opts.eventFile), 0o755); err != nil {
-		return err
-	}
 	_ = os.Remove(d.opts.socketPath)
 	listener, err := net.Listen("unix", d.opts.socketPath)
 	if err != nil {
@@ -320,7 +294,6 @@ func (d *daemon) Run(ctx context.Context) error {
 	go func() { _ = apiServer.Serve(listener) }()
 	defer apiServer.Close()
 
-	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DNS resolver daemon started", nil)
 	if !d.opts.dryRun {
 		d.stateMu.RLock()
 		queryLogSpec := d.config.Spec.QueryLog
@@ -329,7 +302,6 @@ func (d *daemon) Run(ctx context.Context) error {
 			queryLog, err := logstore.OpenDNSQueryLog(queryLogSpec.Path)
 			if err != nil {
 				d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
-				d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "QueryLogOpenFailed", err.Error(), nil)
 				return err
 			}
 			d.queryLogMu.Lock()
@@ -344,22 +316,19 @@ func (d *daemon) Run(ctx context.Context) error {
 		d.stateMu.Unlock()
 		for i := range sources {
 			if sources[i].Pool != nil {
-				sources[i].Pool.Start(sourceCtx, d.publish)
+				sources[i].Pool.Start(sourceCtx)
 			}
 		}
 		if err := d.startDNS(ctx); err != nil {
 			sourceCancel()
 			d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
-			d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ListenFailed", err.Error(), nil)
 			return err
 		}
 	}
 	if !d.opts.dryRun && d.listenerCount() == 0 {
 		d.setState(daemonapi.PhaseStarting, daemonapi.HealthUnknown)
-		d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "AwaitingConfig", "DNS resolver started without usable config; awaiting reload", nil)
 	} else {
 		d.setState(daemonapi.PhaseRunning, daemonapi.HealthOK)
-		d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DNS resolver daemon is ready", nil)
 	}
 	select {
 	case <-ctx.Done():
@@ -369,11 +338,9 @@ func (d *daemon) Run(ctx context.Context) error {
 		}
 		d.shutdownDNSServers()
 		d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
-		d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ServeFailed", failure.err.Error(), map[string]string{"listen": failure.addr, "network": failure.network})
 		return fmt.Errorf("serve %s %s: %w", failure.network, failure.addr, failure.err)
 	}
 	d.shutdownDNSServers()
-	d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "DNS resolver daemon stopped", nil)
 	return ctx.Err()
 }
 
@@ -473,34 +440,17 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 	result, err := d.resolve(localAddr.String(), req)
 	resp := result.Response
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "routerd-dns-resolver: resolve from %s: %v\n", w.RemoteAddr(), err)
 		resp = new(dns.Msg)
 		resp.SetRcode(req, dns.RcodeServerFailure)
 		result.Response = resp
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
 	}
-	writeErr := w.WriteMsg(resp)
-	remoteAddr := w.RemoteAddr().String()
-	if writeErr != nil || (err != nil && len(req.Question) > 0) {
-		client, qname, qtype := remoteAddr, "", ""
-		if host, _, splitErr := net.SplitHostPort(client); splitErr == nil {
-			client = host
-		}
-		if len(req.Question) > 0 {
-			qname, qtype = req.Question[0].Name, dns.TypeToString[req.Question[0].Qtype]
-			if err != nil {
-				d.publish("routerd.dns.query.failed", daemonapi.SeverityWarning, "DNSResolutionFailed", err.Error(), map[string]string{
-					"source": result.Upstream, "qname": qname, "qtype": qtype, "clientAddress": client,
-				})
-			}
-		}
-		if writeErr != nil {
-			d.publish("routerd.dns.query.failed", daemonapi.SeverityWarning, "DNSResponseWriteFailed", writeErr.Error(), map[string]string{
-				"source": result.Upstream, "qname": qname, "qtype": qtype, "clientAddress": client,
-				"listen": localAddr.String(), "network": localAddr.Network(),
-			})
-			return
-		}
+	if err := w.WriteMsg(resp); err != nil {
+		fmt.Fprintf(os.Stderr, "routerd-dns-resolver: write response to %s: %v\n", w.RemoteAddr(), err)
+		return
 	}
+	remoteAddr := w.RemoteAddr().String()
 	d.recordQuery(remoteAddr, req, result, time.Since(started))
 }
 
@@ -553,7 +503,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 			if err != nil {
 				return result, err
 			}
-			out, err := source.Pool.Exchange(context.Background(), wire, d.publish)
+			out, err := source.Pool.Exchange(context.Background(), wire)
 			if err != nil {
 				// Failover is limited to this source's explicitly configured
 				// upstreams. Falling through could leak a private query to a
@@ -565,7 +515,6 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 				return result, err
 			}
 			if source.Spec.DNSSECValidate && !resp.AuthenticatedData {
-				d.publish("routerd.dns.resolver.dnssec.failed", daemonapi.SeverityWarning, "DNSSECValidationFailed", question.Name, map[string]string{"source": source.Spec.Name, "qname": question.Name})
 				return result, fmt.Errorf("DNS source %q: DNSSEC validation failed", result.Upstream)
 			}
 			if config.Spec.Cache.Enabled {
@@ -745,9 +694,6 @@ func (d *daemon) routes() http.Handler {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("/v1/status", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(d.status()) })
-	mux.HandleFunc("/v1/events", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(d.eventsSince(r.URL.Query().Get("since")))
-	})
 	mux.HandleFunc("/v1/leases", d.leaseHandler)
 	mux.HandleFunc("/v1/reload", d.reloadHandler)
 	return mux
@@ -787,7 +733,7 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	topic, ok := daemonapi.DHCPLeaseEventType(lease.Action)
+	_, ok := daemonapi.DHCPLeaseEventType(lease.Action)
 	if !ok {
 		http.Error(w, "unsupported DHCP lease action", http.StatusBadRequest)
 		return
@@ -796,7 +742,6 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 	zones := d.zones
 	d.stateMu.RUnlock()
 	zones.ApplyLease(lease)
-	d.publish(topic, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"mac": lease.MAC, "ip": lease.IP, "hostname": lease.Hostname})
 	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
 }
 
@@ -852,7 +797,7 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 		sourceCtx, sourceCancel = context.WithCancel(ctx)
 		for i := range sources {
 			if sources[i].Pool != nil {
-				sources[i].Pool.Start(sourceCtx, d.publish)
+				sources[i].Pool.Start(sourceCtx)
 			}
 		}
 	}
@@ -890,10 +835,6 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 		}
 	}
 	summary := reloadSummary{Reloaded: true, Listeners: len(mergedListeners), Sources: len(sources)}
-	d.publish("routerd.dns.resolver.reloaded", daemonapi.SeverityInfo, "Reloaded", "DNS resolver config reloaded", map[string]string{
-		"listeners": fmt.Sprintf("%d", summary.Listeners),
-		"sources":   fmt.Sprintf("%d", summary.Sources),
-	})
 	return summary, nil
 }
 
@@ -955,55 +896,11 @@ func (d *daemon) observedStatus() map[string]string {
 	return observed
 }
 
-func (d *daemon) eventsSince(since string) eventsResponse {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	var cursor uint64
-	_, _ = fmt.Sscanf(since, "%d", &cursor)
-	var events []daemonapi.DaemonEvent
-	for _, event := range d.events {
-		var eventCursor uint64
-		_, _ = fmt.Sscanf(event.Cursor, "%d", &eventCursor)
-		if eventCursor > cursor {
-			events = append(events, event)
-		}
-	}
-	if len(d.events) > 0 {
-		return eventsResponse{Cursor: d.events[len(d.events)-1].Cursor, Events: events}
-	}
-	return eventsResponse{Events: events}
-}
-
-func (d *daemon) publish(eventType, severity, reason, message string, attrs map[string]string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.nextCursor++
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: d.opts.resource, Kind: dnsresolver.DaemonKind, Instance: d.opts.resource}, eventType, severity)
-	event.Cursor = fmt.Sprintf("%d", d.nextCursor)
-	event.Reason = reason
-	event.Message = message
-	event.Attributes = attrs
-	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: d.opts.resource}
-	d.events = append(d.events, event)
-	if len(d.events) > 1000 {
-		d.events = d.events[len(d.events)-1000:]
-	}
-	d.cond.Broadcast()
-	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
-}
-
 func (d *daemon) setState(phase, health string) {
-	d.stateMu.RLock()
-	listenerCount := len(d.listeners)
-	zoneCount := d.zones.ZoneCount()
-	d.stateMu.RUnlock()
 	d.mu.Lock()
 	d.phase = phase
 	d.health = health
-	state := map[string]any{"phase": d.phase, "health": d.health, "listeners": listenerCount, "zones": zoneCount}
 	d.mu.Unlock()
-	data, _ := json.MarshalIndent(state, "", "  ")
-	_ = os.WriteFile(d.opts.stateFile, append(data, '\n'), 0o644)
 }
 
 func (d *daemon) currentHealth() string {

@@ -29,6 +29,12 @@ routerd 與受管理的常駐程式會在本機的 Unix domain socket 上公開 
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 通訊流量歷程 |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | 防火牆日誌 |
 
+## DHCP 租約 hook
+
+dnsmasq hook 不是 Control API endpoint。`routerd-dhcp-event-relay` 會將每次通知
+正規化並寫入有上限的本機佇列 `dhcp-events/pending.db`。`routerd serve` 在
+controller 啟動後依提交順序讀取佇列，因此在 routerd 重新啟動期間已接納的通知不會遺失。
+
 ## SAM enrollment endpoint
 
 Dynamic SAM enrollment 也使用同一 API handler，但 RR 只能透過 enrollment runbook 中明確
@@ -71,10 +77,13 @@ client/controller，而不是自行解讀這些回應。
 | --- | --- |
 | `GET /v1/healthz` | 存活確認（liveness check） |
 | `GET /v1/status` | 常駐程式的狀態及相關資源的狀態 |
-| `GET /v1/events` | 事件日誌。可透過 query 參數指定 `since`、`wait`、`topic` |
+| `GET /v1/events` | ARP、DHCP 用戶端、PPPoE 及 healthcheck 常駐程式的事件歷程；支援 `since`、`wait`、`topic` |
 | `POST /v1/commands/reload` | 重新載入設定 |
 | `POST /v1/commands/renew` | 各常駐程式的主動操作（DHCPv6 Renew、DHCPv4 更新租約、立即執行健康探測等） |
 | `POST /v1/commands/stop` | 安全停止 |
+
+DNS 解析器與 RA observer 透過 `/v1/status` 回傳目前狀態，但不保留另一份狀態檔案、
+事件旁路檔案或 `/v1/events` 歷程。
 
 `renew` 的意義因常駐程式而異。DHCPv6 為傳送 Renew、DHCPv4 為更新租約、healthcheck 為立即執行探測。
 
@@ -109,6 +118,7 @@ client/controller，而不是自行解讀這些回應。
 }
 ```
 
-routerd 將事件持久化至 SQLite。
-受管理的常駐程式另外也會記錄至各自的 `events.jsonl`。
-`EventRule` 與 `DerivedEvent` 以此串流為輸入，發布虛擬事件。
+routerd 將事件持久化至 SQLite。ARP、DHCP 用戶端、PPPoE 及 healthcheck 常駐程式
+還會將協定事件寫入各自的 `events.jsonl`。DNS 解析器與 RA observer 的狀態直接從
+`/v1/status` 讀取，不再寫入重複的旁路檔案。`EventRule` 與 `DerivedEvent` 使用
+routerd 的事件串流。

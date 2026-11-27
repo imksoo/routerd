@@ -394,12 +394,15 @@ sudo routerctl plugin run <name> --dry-run
 - Linux 状態: `/var/lib/routerd`
 - FreeBSD 実行時と状態: `/var/run/routerd`, `/var/db/routerd`
 
-管理対象デーモンは同じローカル契約を公開します。
+管理対象デーモンは、必要な範囲で次のローカル契約を公開します。
 
 - `GET /v1/status`
 - `GET /v1/healthz`
 - `GET /v1/events?since=<cursor>&wait=<duration>`
 - `POST /v1/commands/<command>`
+
+DNSリゾルバーとRA observerは現在状態を`/v1/status`から返し、
+`/v1/events`の履歴や重複する状態・イベントファイルは持ちません。
 
 Linuxでは、設定適用処理と常駐処理が`/run/routerd/dnsmasq.conf`を共有します。
 `--dnsmasq-file`で指定したパスも両処理で使用します。
