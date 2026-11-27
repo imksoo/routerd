@@ -427,7 +427,7 @@ func cloneFlowState(state *flowState) *flowState {
 }
 
 func metadataOnlyResult(req dpi.ClassifyRequest) dpi.ClassifyResult {
-	result := dpi.Classify(req)
+	result := dpi.PacketMetadata(req)
 	result.AppName = "unknown"
 	result.AppCategory = ""
 	result.AppConfidence = 0
@@ -438,7 +438,7 @@ func metadataOnlyResult(req dpi.ClassifyRequest) dpi.ClassifyResult {
 }
 
 func flowKey(req dpi.ClassifyRequest) string {
-	meta := dpi.Classify(req)
+	meta := dpi.PacketMetadata(req)
 	proto := strings.ToLower(strings.TrimSpace(stringutil.FirstNonEmpty(req.TransportProtocol, meta.TransportProtocol)))
 	src := stringutil.FirstNonEmpty(req.SrcAddress, meta.SrcAddress)
 	dst := stringutil.FirstNonEmpty(req.DstAddress, meta.DstAddress)

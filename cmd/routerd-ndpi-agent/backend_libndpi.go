@@ -262,7 +262,7 @@ func packetForNDPI(req dpi.ClassifyRequest) ([]byte, error) {
 	if len(req.Packet) > 0 {
 		return append([]byte(nil), req.Packet...), nil
 	}
-	meta := dpi.Classify(req)
+	meta := dpi.PacketMetadata(req)
 	src, err := netip.ParseAddr(meta.SrcAddress)
 	if err != nil {
 		return nil, err
