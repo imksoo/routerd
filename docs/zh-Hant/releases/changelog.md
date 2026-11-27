@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+- DNS 解析器將監聽器異常結束及回應傳送失敗視為錯誤，在快取鎖之外記錄事件，並且只在上游 DNS 伺服器狀態改變時記錄恢復正常或無法使用的事件。
+
 ## v20261126.1233
 
 - DHCP 租約刪除後仍可正向及反向解析固定位址保留的主機名稱。

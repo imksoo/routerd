@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+- The DNS resolver treats unexpected listener exits and failures to send responses as errors, records events outside the cache lock, and logs upstream healthy or down events only when the state changes.
+
 ## v20261126.1233
 
 - DNS keeps configured DHCP reservation names and reverse records after lease removal.
