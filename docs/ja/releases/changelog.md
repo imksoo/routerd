@@ -13,7 +13,7 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## v20261127.1713
 
-- 未使用の周期適用オプション、DNSリゾルバーとRA observerの重複した状態・イベント履歴、DHCP relayのソケット／API直送経路、旧in-process healthcheck runner、独立したDPI classifierプロセスを削除しました。デーモンの現在状態、DHCP通知の永続キュー、独立healthcheck unit、ndpi-agentへの直接分類は維持します。
+- 未使用の周期適用オプション、DNSリゾルバーとRA observerの重複した状態・イベント履歴、DHCP relayのソケット／API直送経路、旧in-process healthcheck runner、独立DPI classifierと組み込み分類器を削除しました。デーモンの現在状態、DHCP通知の永続キュー、独立healthcheck unit、ndpi-agentへの直接分類は維持します。
 
 ## v20261127.1548
 
