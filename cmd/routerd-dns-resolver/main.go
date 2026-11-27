@@ -59,7 +59,9 @@ type daemon struct {
 	listeners    map[string]*boundListener
 	sourceCancel context.CancelFunc
 	generation   uint64
+	cacheMu      sync.Mutex // Acquired after stateMu when both are needed.
 	cache        map[string]cacheEntry
+	serveErr     chan dnsServeError
 	queryLogMu   sync.Mutex
 	queryLog     *logstore.DNSQueryLog
 }
@@ -73,6 +75,12 @@ type boundListener struct {
 	Addr string
 	UDP  *dns.Server
 	TCP  *dns.Server
+}
+
+type dnsServeError struct {
+	addr    string
+	network string
+	err     error
 }
 
 type cacheEntry struct {
@@ -252,6 +260,7 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 		health:    daemonapi.HealthUnknown,
 		cache:     map[string]cacheEntry{},
 		listeners: map[string]*boundListener{},
+		serveErr:  make(chan dnsServeError, 1),
 	}
 	d.cond = sync.NewCond(&d.mu)
 	d.zones = newZoneTable(config.Zones)
@@ -352,7 +361,17 @@ func (d *daemon) Run(ctx context.Context) error {
 		d.setState(daemonapi.PhaseRunning, daemonapi.HealthOK)
 		d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DNS resolver daemon is ready", nil)
 	}
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case failure := <-d.serveErr:
+		if d.cancel != nil {
+			d.cancel()
+		}
+		d.shutdownDNSServers()
+		d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
+		d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ServeFailed", failure.err.Error(), map[string]string{"listen": failure.addr, "network": failure.network})
+		return fmt.Errorf("serve %s %s: %w", failure.network, failure.addr, failure.err)
+	}
 	d.shutdownDNSServers()
 	d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "DNS resolver daemon stopped", nil)
 	return ctx.Err()
@@ -364,19 +383,12 @@ func (d *daemon) startDNS(ctx context.Context) error {
 	d.stateMu.RUnlock()
 	listeners, err := d.openBoundListeners(ctx, desired)
 	if err != nil {
-		shutdownBoundListeners(listeners)
 		return err
 	}
 	d.stateMu.Lock()
 	d.listeners = listeners
 	d.stateMu.Unlock()
-	select {
-	case <-ctx.Done():
-		d.shutdownDNSServers()
-		return ctx.Err()
-	case <-time.After(200 * time.Millisecond):
-		return nil
-	}
+	return nil
 }
 
 func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct{}) (map[string]*boundListener, error) {
@@ -397,23 +409,46 @@ func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct
 		}
 		bound := &boundListener{
 			Addr: addr,
-			UDP:  &dns.Server{PacketConn: packetConn, Net: "udp", Handler: handler},
+			UDP:  &dns.Server{PacketConn: packetConn, Net: "udp", Handler: handler, UDPSize: dnsUDPSize},
 			TCP:  &dns.Server{Listener: listener, Net: "tcp", Handler: handler},
 		}
 		listeners[addr] = bound
-		go d.serveDNS(bound.UDP, addr, "udp")
-		go d.serveDNS(bound.TCP, addr, "tcp")
+		udpStarted, tcpStarted := make(chan error, 1), make(chan error, 1)
+		go d.serveDNS(bound.UDP, addr, udpStarted)
+		go d.serveDNS(bound.TCP, addr, tcpStarted)
+		udpErr, tcpErr := <-udpStarted, <-tcpStarted
+		if udpErr != nil || tcpErr != nil {
+			shutdownBoundListeners(listeners)
+			if udpErr != nil {
+				return nil, fmt.Errorf("activate udp %s: %w", addr, udpErr)
+			}
+			return nil, fmt.Errorf("activate tcp %s: %w", addr, tcpErr)
+		}
 	}
 	return listeners, nil
 }
 
-func (d *daemon) serveDNS(server *dns.Server, addr, network string) {
-	if err := server.ActivateAndServe(); err != nil && err != http.ErrServerClosed {
-		d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ServeFailed", err.Error(), map[string]string{"listen": addr, "network": network})
+func (d *daemon) serveDNS(server *dns.Server, addr string, startup chan<- error) {
+	server.NotifyStartedFunc = func() {
+		startup <- nil
+		startup = nil
+	}
+	err := server.ActivateAndServe()
+	if startup != nil {
+		startup <- err
+		return
+	}
+	if err != nil {
+		select {
+		case d.serveErr <- dnsServeError{addr: addr, network: server.Net, err: err}:
+		default:
+		}
 	}
 }
 
 func (d *daemon) shutdownDNSServers() {
+	d.reloadMu.Lock()
+	defer d.reloadMu.Unlock()
 	d.stateMu.Lock()
 	listeners := d.listeners
 	d.listeners = map[string]*boundListener{}
@@ -423,14 +458,19 @@ func (d *daemon) shutdownDNSServers() {
 
 func shutdownBoundListeners(listeners map[string]*boundListener) {
 	for _, listener := range listeners {
-		_ = listener.UDP.Shutdown()
-		_ = listener.TCP.Shutdown()
+		if err := listener.UDP.Shutdown(); err != nil {
+			_ = listener.UDP.PacketConn.Close()
+		}
+		if err := listener.TCP.Shutdown(); err != nil {
+			_ = listener.TCP.Listener.Close()
+		}
 	}
 }
 
 func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 	started := time.Now()
-	result, err := d.resolve(w.LocalAddr().String(), req)
+	localAddr := w.LocalAddr()
+	result, err := d.resolve(localAddr.String(), req)
 	resp := result.Response
 	if err != nil {
 		resp = new(dns.Msg)
@@ -438,18 +478,30 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		result.Response = resp
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
 	}
-	_ = w.WriteMsg(resp)
-	if err != nil && len(req.Question) > 0 {
-		client := w.RemoteAddr().String()
+	writeErr := w.WriteMsg(resp)
+	remoteAddr := w.RemoteAddr().String()
+	if writeErr != nil || (err != nil && len(req.Question) > 0) {
+		client, qname, qtype := remoteAddr, "", ""
 		if host, _, splitErr := net.SplitHostPort(client); splitErr == nil {
 			client = host
 		}
-		d.publish("routerd.dns.query.failed", daemonapi.SeverityWarning, "DNSResolutionFailed", err.Error(), map[string]string{
-			"source": result.Upstream, "qname": req.Question[0].Name,
-			"qtype": dns.TypeToString[req.Question[0].Qtype], "clientAddress": client,
-		})
+		if len(req.Question) > 0 {
+			qname, qtype = req.Question[0].Name, dns.TypeToString[req.Question[0].Qtype]
+			if err != nil {
+				d.publish("routerd.dns.query.failed", daemonapi.SeverityWarning, "DNSResolutionFailed", err.Error(), map[string]string{
+					"source": result.Upstream, "qname": qname, "qtype": qtype, "clientAddress": client,
+				})
+			}
+		}
+		if writeErr != nil {
+			d.publish("routerd.dns.query.failed", daemonapi.SeverityWarning, "DNSResponseWriteFailed", writeErr.Error(), map[string]string{
+				"source": result.Upstream, "qname": qname, "qtype": qtype, "clientAddress": client,
+				"listen": localAddr.String(), "network": localAddr.Network(),
+			})
+			return
+		}
 	}
-	d.recordQuery(w.RemoteAddr().String(), req, result, time.Since(started))
+	d.recordQuery(remoteAddr, req, result, time.Since(started))
 }
 
 func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) {
@@ -650,8 +702,8 @@ func sourcesForListen(config dnsresolver.RuntimeConfig, sources []runtimeSource,
 }
 
 func (d *daemon) cacheGet(key string, generation uint64) ([]byte, uint64, bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.cacheMu.Lock()
+	defer d.cacheMu.Unlock()
 	now := time.Now()
 	entry, ok := d.cache[key]
 	if !ok || entry.Generation != generation || !now.Before(entry.Expires) {
@@ -666,14 +718,13 @@ func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries 
 	if ttl <= 0 {
 		return
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.stateMu.RLock()
-	currentGeneration := d.generation
-	d.stateMu.RUnlock()
-	if generation != currentGeneration {
+	defer d.stateMu.RUnlock()
+	if generation != d.generation {
 		return
 	}
+	d.cacheMu.Lock()
+	defer d.cacheMu.Unlock()
 	if maxEntries > 0 && len(d.cache) >= maxEntries {
 		for k := range d.cache {
 			delete(d.cache, k)
@@ -752,6 +803,9 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 	d.reloadMu.Lock()
 	defer d.reloadMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return reloadSummary{}, err
+	}
 
 	config, err := loadConfig(d.opts)
 	if err != nil {
@@ -819,10 +873,10 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 	d.listeners = mergedListeners
 	d.sourceCancel = sourceCancel
 	d.generation++
-	d.stateMu.Unlock()
-	d.mu.Lock()
+	d.cacheMu.Lock()
 	clear(d.cache)
-	d.mu.Unlock()
+	d.cacheMu.Unlock()
+	d.stateMu.Unlock()
 
 	shutdownBoundListeners(removals)
 	if oldSourceCancel != nil {

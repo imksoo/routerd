@@ -34,6 +34,7 @@ const (
 	upstreamDown    = "Down"
 	upstreamProbing = "Probing"
 
+	dnsUDPSize        = 4096
 	maxDNSMessageSize = 65535
 )
 
@@ -178,15 +179,19 @@ func (p *upstreamPool) probe(ctx context.Context, upstream *dnsUpstream, publish
 	if ctx.Err() != nil {
 		return
 	}
+	p.recordResult(upstream, err, publish)
+}
+
+func (p *upstreamPool) recordResult(upstream *dnsUpstream, err error, publish func(string, string, string, string, map[string]string)) {
 	if err != nil {
-		phase := p.markFailure(upstream, err)
-		if publish != nil && phase == upstreamDown {
+		phase, changed := p.markFailure(upstream, err)
+		if publish != nil && changed && phase == upstreamDown {
 			publish("routerd.dns.upstream.down", daemonapi.SeverityWarning, "UpstreamDown", err.Error(), map[string]string{"upstream": upstream.URL, "scheme": upstream.Scheme})
 		}
 		return
 	}
-	phase := p.markSuccess(upstream)
-	if publish != nil && phase == upstreamHealthy {
+	phase, changed := p.markSuccess(upstream)
+	if publish != nil && changed && phase == upstreamHealthy {
 		publish("routerd.dns.upstream.healthy", daemonapi.SeverityInfo, "UpstreamHealthy", "DNS upstream is healthy", map[string]string{"upstream": upstream.URL, "scheme": upstream.Scheme})
 	}
 }
@@ -203,12 +208,11 @@ func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		p.recordResult(upstream, err, publish)
 		if err == nil {
-			p.markSuccess(upstream)
 			return resp, nil
 		}
 		errs = append(errs, fmt.Sprintf("%s: %v", upstream.URL, err))
-		p.markFailure(upstream, err)
 	}
 	return nil, fmt.Errorf("all DNS upstreams failed: %s", strings.Join(errs, "; "))
 }
@@ -364,7 +368,7 @@ func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, q
 	if _, err := conn.Write(query); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, 4096)
+	buf := make([]byte, dnsUDPSize)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, err
@@ -493,9 +497,10 @@ func (p *upstreamPool) snapshotPointers() []*dnsUpstream {
 	return out
 }
 
-func (p *upstreamPool) markSuccess(upstream *dnsUpstream) string {
+func (p *upstreamPool) markSuccess(upstream *dnsUpstream) (string, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	previousPhase := upstream.Phase
 	upstream.Successes++
 	upstream.Failures = 0
 	upstream.LastError = ""
@@ -505,12 +510,13 @@ func (p *upstreamPool) markSuccess(upstream *dnsUpstream) string {
 	} else {
 		upstream.Phase = upstreamProbing
 	}
-	return upstream.Phase
+	return upstream.Phase, upstream.Phase != previousPhase
 }
 
-func (p *upstreamPool) markFailure(upstream *dnsUpstream, err error) string {
+func (p *upstreamPool) markFailure(upstream *dnsUpstream, err error) (string, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	previousPhase := upstream.Phase
 	upstream.Failures++
 	upstream.Successes = 0
 	upstream.LastError = err.Error()
@@ -520,7 +526,7 @@ func (p *upstreamPool) markFailure(upstream *dnsUpstream, err error) string {
 	} else {
 		upstream.Phase = upstreamFailing
 	}
-	return upstream.Phase
+	return upstream.Phase, upstream.Phase != previousPhase
 }
 
 func (p *upstreamPool) Snapshot() []dnsUpstream {
