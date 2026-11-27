@@ -75,7 +75,7 @@ Check that the generated dnsmasq configuration:
 
 - Contains the expected `dhcp-range`.
 - Has `port=0` (DNS handling disabled — that's `routerd-dns-resolver`'s job).
-- References `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay` so lease changes are forwarded to routerd.
+- References `dhcp-script=/usr/local/sbin/routerd-dhcp-event-relay` so lease changes are forwarded to routerd.
 - Has `enable-ra` when RA is part of the configuration.
 
 ## DNS resolver

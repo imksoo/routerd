@@ -73,7 +73,7 @@ DNS の応答と転送は、`routerd-dns-resolver` が担当します。
 
 - 期待する `dhcp-range` が含まれている
 - `port=0` になっている (DNS 機能が止まっている。DNS は `routerd-dns-resolver` の責務です)
-- `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay` がある (リースの変化を routerd へ通知する経路)
+- `dhcp-script=/usr/local/sbin/routerd-dhcp-event-relay` がある (リースの変化を routerd へ通知する経路)
 - 必要な構成で `enable-ra` が入っている
 
 ## DNS リゾルバー

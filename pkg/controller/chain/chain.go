@@ -4682,7 +4682,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname)
-		lines = append(lines, "dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay")
+		lines = append(lines, "dhcp-script=/usr/local/sbin/routerd-dhcp-event-relay")
 		start := stringutil.FirstNonEmpty(spec.AddressPool.Start, spec.RangeStart)
 		end := stringutil.FirstNonEmpty(spec.AddressPool.End, spec.RangeEnd)
 		leaseTime := stringutil.FirstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
