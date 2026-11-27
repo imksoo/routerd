@@ -12,7 +12,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
-## v20261127.1713
+## v20261127.1733
 
 - Remove the unused scheduled-apply option, duplicate DNS resolver and RA observer side state/event histories, the DHCP relay direct socket/API path, the legacy in-process healthcheck runner, and the separate and built-in DPI classifiers. Keep daemon live status, durable DHCP callback recovery, standalone healthcheck units, and direct ndpi-agent classification.
 
