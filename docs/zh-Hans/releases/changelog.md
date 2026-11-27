@@ -11,7 +11,7 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
-## v20261127.1733
+## v20261127.1753
 
 - 移除未使用的周期应用选项、DNS 解析器与 RA observer 的重复状态／事件历史、DHCP relay 的 socket／API 直送路径、旧的进程内 healthcheck runner，以及独立和内置 DPI classifier。保留守护进程实时状态、DHCP 通知持久队列、独立 healthcheck unit 与 ndpi-agent 直接分类。
 
