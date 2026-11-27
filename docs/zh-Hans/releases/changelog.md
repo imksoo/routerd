@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261127.1548
+
 - DNS 解析器将监听器异常退出和应答发送失败视为错误，在缓存锁外记录事件，并且仅在上游 DNS 服务器状态发生变化时记录恢复正常或不可用事件。
 
 ## v20261126.1233
