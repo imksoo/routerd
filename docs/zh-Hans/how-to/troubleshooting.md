@@ -70,7 +70,7 @@ DNS 响应与转发由 `routerd-dns-resolver` 负责。
 
 - 包含预期的 `dhcp-range`
 - 配置为 `port=0`（禁用 DNS 功能；DNS 是 `routerd-dns-resolver` 的职责）
-- 包含 `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay`（将租约变更通知 routerd 的路径）
+- 包含 `dhcp-script=/usr/local/sbin/routerd-dhcp-event-relay`（将租约变更通知 routerd 的路径）
 - 按需加入 `enable-ra`
 
 ## DNS resolver

@@ -41,7 +41,7 @@ routerd 在 Linux 上使用的 OS 功能如下。
 
 DHCPv4、DHCPv6-PD、PPPoE、RA 與 mobility ARP observer 和 BGP、DNS 輔助程序一樣，使用每個資源獨立的服務。routerd 解析 `When` 與 HA 角色條件後，透過服務管理器啟動或停止用戶端，不讓用戶端在開機時獨立自動啟動。選擇外部 DHCPv6-PD 用戶端不會啟動內建用戶端。用戶端單元沒有對 `routerd.service` 的 `BindsTo`、`PartOf`、`Requires` 相依，因此重新啟動主程序不會停止它們。FreeBSD 使用現有 rc.d 產生器和原生服務操作，不再使用 Runner 程序監督。用戶端資源的 `When` 為 true 時才啟動或更新；條件未確定時保留現有單元，不啟動、停止或改寫。條件為 false 或從設定刪除時移除單元。停用 PPPoE、選擇外部 DHCPv6-PD 用戶端及 HA 備用節點仍會停止內建用戶端。
 
-套件提供 `routerd.slice`，固定主單元和所有產生的 routerd 服務都屬於此 slice。更新時維護指令碼僅停止 `routerd.service` 和 `routerd.slice`。移除時，`prerm` 還會停用主單元，以 `grep -l` 從 `/etc/systemd/system/*.service` 中選出帶有 `# routerd-managed-service: v1` 的檔案，對每個單元執行 `systemctl disable --now`，再刪除產生檔案。啟用連結由 systemctl 管理；`postrm` 僅重新載入 systemd。這些服務操作及移除清理僅在 systemd 運行時執行。保留維運與 ISO drop-in、設定、資料庫及金鑰。更新時僅在 `/etc/systemd/system/routerd.service` 帶有相同產生標記時刪除它，保留維運人員建立的單元和 drop-in 目錄。
+套件提供 `routerd.slice`，固定主單元和所有產生的 routerd 服務都屬於此 slice。更新時維護指令碼僅停止 `routerd.service` 和 `routerd.slice`。移除時，`prerm` 還會停用主單元，以 `grep -l` 從 `/etc/systemd/system/*.service` 中選出帶有 `# routerd-managed-service: v1` 的檔案，對每個單元執行 `systemctl disable --now`，再刪除產生檔案。啟用連結由 systemctl 管理；`postrm` 僅重新載入 systemd。這些服務操作及移除清理僅在 systemd 運行時執行。保留維運與 ISO drop-in、設定、資料庫及金鑰。
 
 dnsmasq 管理 DHCP 時啟動 `routerd-dhcp-fingerprint-watcher.service`。watcher 使用 `--journal-unit routerd-dnsmasq.service` 讀取日誌，寫入與 Web Console 相同的 `--db /var/lib/routerd/dhcp-fingerprints.db`。停止及重新啟動隨 dnsmasq 連動。它沒有租約檔案或 ARP 輸入參數；收集需要 DHCP 的 `logDHCP: true`。
 

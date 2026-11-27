@@ -85,9 +85,8 @@ The error and daemon log include `stage`, `generation`, `canonical`,
 | Terminal generation UPDATE | New configuration | New runtime is retained; the command/API fails without emitting a normal success result. |
 | Result/status output | New configuration | The completed generation remains completed; output failure is returned. |
 
-The daemon retains failed configuration-attempt diagnostics in memory, including
-when SQLite cannot record them. A successful scheduled observation does not clear
-those diagnostics; a subsequent configuration operation must resolve the failure.
+The daemon retains failed configuration-attempt diagnostics in memory when SQLite
+cannot record them. A subsequent configuration operation must resolve the failure.
 This memory does not survive a process restart. Inspect the error, canonical YAML,
 generation history and controller status before retrying. These contracts do not
 promise rollback of all OS changes or power-loss durability on every filesystem.

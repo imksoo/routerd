@@ -1337,7 +1337,6 @@ func raObserverUnitSpec(resource, ifname string, telemetryEnv []string) api.Syst
 		RestartSec:               "5s",
 		RuntimeDirectory:         []string{"routerd/ra-observer"},
 		RuntimeDirectoryPreserve: "yes",
-		LogsDirectory:            []string{"routerd"},
 		AmbientCapabilities:      []string{"CAP_NET_RAW"},
 		CapabilityBoundingSet:    []string{"CAP_NET_RAW"},
 		NoNewPrivileges:          &noNewPrivileges,

@@ -180,8 +180,6 @@ func TestFirewallLogRecordsUnknownDPIFlow(t *testing.T) {
 		DstPort:       443,
 		AppName:       "unknown",
 		Metadata:      map[string]string{"reason": "no_application_signal"},
-		Engine:        "builtin",
-		Source:        "builtin",
 		PacketCount:   1,
 		AppConfidence: 0,
 	}, time.Hour, 100000); err != nil {
@@ -197,8 +195,6 @@ func TestFirewallLogRecordsUnknownDPIFlow(t *testing.T) {
 		DstPort:     443,
 		AppName:     "unknown",
 		Metadata:    map[string]string{"reason": "no_application_signal"},
-		Engine:      "builtin",
-		Source:      "builtin",
 		PacketCount: 1,
 	}, time.Hour, 100000); err != nil {
 		t.Fatal(err)

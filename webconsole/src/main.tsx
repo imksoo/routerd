@@ -7809,9 +7809,9 @@ function trafficFlowClassification(flow: TrafficFlow) {
 
 function trafficFlowSource(flow: TrafficFlow) {
   const source = normalizeFacet(flow.source, "");
-  if (source === "ndpi-agent" || source === "builtin" || source === "port-fallback") return source;
+  if (source === "ndpi-agent" || source === "port-fallback") return source;
   const engine = normalizeFacet(flow.engine, "");
-  if (engine === "ndpi-agent" || engine === "builtin") return engine;
+  if (engine === "ndpi-agent") return engine;
   if (normalizeFacet(flow.appCategory, "") === "port-fallback") return "port-fallback";
   return "dpi";
 }
@@ -7820,7 +7820,6 @@ function formatProtocolRankLabel(value: string) {
   const [source, app = value] = value.split(":", 2);
   if (source === "dpi") return `DPI ${formatConnectionApp(app)}`;
   if (source === "ndpi-agent") return `nDPI ${formatConnectionApp(app)}`;
-  if (source === "builtin") return `Built-in ${formatConnectionApp(app)}`;
   if (source === "port-guess") return `port-guess:${formatConnectionApp(app)}`;
   if (source === "port-fallback") return `port-guess:${formatConnectionApp(app)}`;
   if (source === "unidentified") return `Identifying ${formatConnectionApp(app)}`;
@@ -7829,7 +7828,6 @@ function formatProtocolRankLabel(value: string) {
 
 function formatTrafficSourceLabel(value: string) {
   if (value === "ndpi-agent") return "nDPI agent";
-  if (value === "builtin") return "Built-in parser";
   if (value === "port-fallback") return "Port fallback";
   if (value === "dpi") return "DPI";
   if (value === "none") return "Unidentified";
