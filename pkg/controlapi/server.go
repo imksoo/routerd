@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-
-	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 const (
@@ -41,7 +39,6 @@ type Handler struct {
 	GetSAMEnrollmentTopology func(*http.Request, SAMEnrollmentTopologyGetRequest) (*SAMEnrollmentTopologyGetResult, error)
 	SetLogLevel              func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
 	DHCPv6Event              func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
-	DHCPLeaseEvent           func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
 }
 
 type ConnectionsRequest struct {
@@ -92,8 +89,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSetLogLevel(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcpv6-event":
 		h.handleDHCPv6Event(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcp-lease-event":
-		h.handleDHCPLeaseEvent(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -185,41 +180,6 @@ func (h Handler) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.Probe(r, ProbeRequest{Subject: r.URL.Query().Get("subject"), Target: r.URL.Query().Get("target")})
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, ErrBadRequest) {
-			status = http.StatusBadRequest
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h Handler) handleDHCPLeaseEvent(w http.ResponseWriter, r *http.Request) {
-	if h.DHCPLeaseEvent == nil {
-		writeError(w, http.StatusNotImplemented, "dhcp lease event handler is not configured")
-		return
-	}
-	defer r.Body.Close()
-	var req DHCPLeaseEventRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.APIVersion != "" && req.APIVersion != APIVersion {
-		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
-		return
-	}
-	if req.Kind != "" && req.Kind != "DHCPLeaseEvent" {
-		writeError(w, http.StatusBadRequest, "unsupported kind")
-		return
-	}
-	if _, ok := daemonapi.DHCPLeaseEventType(req.Action); !ok || strings.TrimSpace(req.IP) == "" {
-		writeError(w, http.StatusBadRequest, "invalid DHCP lease event")
-		return
-	}
-	result, err := h.DHCPLeaseEvent(r, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrBadRequest) {

@@ -28,5 +28,7 @@ sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
 
 ## 設定
 
-`routerd-dpi-classifier` は、`--engine auto` または `--engine ndpi-agent` と、エージェントのソケットを指す `--ndpi-agent-socket` を指定して構成する必要があります。
-`auto` を推奨します。ネイティブエージェントが利用できない場合に、組み込みの分類器へフォールバックするためです。
+`FirewallEventLog` リソースを有効にします。routerd は
+`routerd-firewall-logger` と `routerd-ndpi-agent` を起動し、ロガーから
+エージェントの Unix ソケットへ採取したパケットを直接送ります。別の分類プロセスや
+組み込み分類器への代替処理はありません。

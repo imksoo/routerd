@@ -5,7 +5,9 @@ slug: /operations/state-database
 
 # 状态数据库
 
-routerd 将状态与事件持久化至 SQLite。每个守护进程除此之外还各自拥有自身的租约或状态文件与事件日志。
+routerd 将状态与事件持久化至 SQLite。协议客户端保留恢复运行所需的租约或状态文件。
+ARP、DHCP 客户端、PPPoE 及 healthcheck 守护进程还会保存协议事件。DNS 解析器与
+RA observer 的状态通过 `/v1/status` 实时读取，不保留重复的旁路文件。
 
 ## 主要路径
 
@@ -16,7 +18,7 @@ routerd 将状态与事件持久化至 SQLite。每个守护进程除此之外�
 | DHCPv4 租约 | `/var/lib/routerd/dhcpv4-client/<name>/lease.json` |
 | PPPoE 状态 | `/var/lib/routerd/pppoe-client/<name>/state.json` |
 | HealthCheck 状态 | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| 守护进程别事件 | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
+| 协议事件（ARP、DHCP 客户端、PPPoE、HealthCheck） | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
 ## events 数据表
 

@@ -38,8 +38,8 @@
 | `spec.enabled` | *选填* | boolean | 默认 false。true 启用所选资源的记录，不会使不可用的连接来源变为可用。 |
 | `spec.path` | **条件必填** | string | 路由器上的 SQLite 数据库路径，正常验证在 enabled 时必填。读取器有内部 /var/lib/routerd/traffic-flows.db 后备值，但不免除启用时的路径要求。 |
 | `spec.source` | *选填* | string; enum=["", "conntrack"] | 仅接受省略或 conntrack，实际标签默认 conntrack。不用于选择其他采集器或任意后端名称。 |
-| `spec.includeApplicationLayer` | *选填* | boolean | 默认 false。与 enabled 同为 true 时请求 DPI 辅助服务及 Linux DPI 观察规则，并在资源状态的 applicationLayer 记录 nDPI 可用性。不保证 libndpi 加载或分类存在。 |
-| `spec.includeTLSSNI` | *选填* | boolean | 默认 false。与 enabled 同为 true 时请求相同 DPI 辅助程序及观察流程。不是 TLS 解密、SNI 采集保证或独立存储脱敏／过滤开关；加密或未观察到的名称可能不可用。 |
+| `spec.includeApplicationLayer` | *选填* | boolean | 默认 false。与 enabled 同为 true 时，仅在 FirewallEventLog 也启用时添加 Linux DPI 观察规则，并在 applicationLayer 状态记录共享 nDPI 代理程序。此字段本身不启动 DPI 服务，也不保证分类结果。 |
+| `spec.includeTLSSNI` | *选填* | boolean | 默认 false。与 enabled 同为 true 时，请求使用 FirewallEventLog 的同一观察流程。此字段不会启动 DPI 服务、解密 TLS、保证采集 SNI，或独立控制存储字段的脱敏。 |
 
 实现: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_firewall.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go) · [pkg/controller/conntrackobserver/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/conntrackobserver/controller.go) · [pkg/render/dpi_systemd.go](https://github.com/imksoo/routerd/blob/main/pkg/render/dpi_systemd.go) · [pkg/render/nftables.go](https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go)
 

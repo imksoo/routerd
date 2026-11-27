@@ -600,10 +600,6 @@ func statusSubscriptionsWithWhen(router *api.Router, controlledKinds []string, k
 	}}
 }
 
-func whenStatusSubscriptions(router *api.Router, controlledKinds ...string) []bus.Subscription {
-	return statusSubscriptionsWithWhen(router, controlledKinds)
-}
-
 func vrrpStatusSubscriptions(router *api.Router) []bus.Subscription {
 	return append(statusSubscriptionsWithWhen(router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService"), bus.Subscription{
 		Topics: []string{daemonapi.EventVRRPRoleTransition},
@@ -647,7 +643,7 @@ func serviceUnitStatusSubscriptions(router *api.Router) []bus.Subscription {
 }
 
 func observabilityPipelineStatusSubscriptions(router *api.Router) []bus.Subscription {
-	return whenStatusSubscriptions(router, "ObservabilityPipeline")
+	return statusSubscriptionsWithWhen(router, []string{"ObservabilityPipeline"})
 }
 
 func whenStatusDependencyRefs(router *api.Router, controlledKinds ...string) map[string]map[string]bool {
@@ -932,6 +928,20 @@ func (r *Runner) effectiveRouter(store eventedStore) *api.Router {
 	return resourcequery.FilterRouterByWhen(r.currentRouter(), store)
 }
 
+func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, error) {
+	if err := r.saveWhenFalseStatuses(store); err != nil {
+		return nil, err
+	}
+	return resolveWireGuardSAMResources(r.effectiveRouter(store))
+}
+
+func (r *Runner) effectiveDynamicRouteSAMView(store eventedStore, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
+	if err := r.saveWhenFalseStatuses(store); err != nil {
+		return dynamicRouteSAMView{}, err
+	}
+	return buildDynamicRouteSAMView(r.effectiveRouter(store), r.Store, now, targetOS)
+}
+
 func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 	if r.currentRouter() == nil {
 		return nil
@@ -1069,33 +1079,6 @@ func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store event
 
 func statusIsWhenFalse(status map[string]any) bool {
 	return strings.TrimSpace(fmt.Sprint(status["reason"])) == "WhenFalse"
-}
-
-func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, error) {
-	if err := r.saveWhenFalseStatuses(store); err != nil {
-		return nil, err
-	}
-	effective := r.effectiveRouter(store)
-	resolved, err := resolveWireGuardSAMResources(effective)
-	if err != nil {
-		return nil, err
-	}
-	return resolved, nil
-}
-
-func (r *Runner) effectiveDynamicRouteSAMView(store eventedStore, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
-	if err := r.saveWhenFalseStatuses(store); err != nil {
-		return dynamicRouteSAMView{}, err
-	}
-	return buildDynamicRouteSAMView(r.effectiveRouter(store), r.Store, now, targetOS)
-}
-
-func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time.Time, targetOS platform.OS) (*api.Router, error) {
-	view, err := r.effectiveDynamicRouteSAMView(store, now, targetOS)
-	if err != nil {
-		return nil, err
-	}
-	return view.EffectiveRouter, nil
 }
 
 func (r *Runner) startClientDaemonSources(ctx context.Context, logger *slog.Logger, router *api.Router) error {
@@ -1243,7 +1226,6 @@ type controllerGeneration struct {
 	cancel           context.CancelFunc
 	decision         ha.Decision
 	controllers      []framework.Controller
-	daemonStatusSync DaemonStatusController
 	heartbeatStarted bool
 }
 
@@ -1272,7 +1254,7 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 		cancel()
 		return nil, err
 	}
-	controllers, daemonStatusSync, err := r.frameworkControllers(generationCtx, logger, store, true, decision)
+	controllers, err := r.frameworkControllers(generationCtx, logger, store, true, decision)
 	if err == nil {
 		err = generationCtx.Err()
 	}
@@ -1312,7 +1294,6 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 		cancel:           cancel,
 		decision:         decision,
 		controllers:      controllers,
-		daemonStatusSync: daemonStatusSync,
 		heartbeatStarted: heartbeatStarted,
 	}, nil
 }
@@ -1365,9 +1346,6 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		}
 		if err := r.startClientDaemonSources(generation.ctx, logger, generation.router); err != nil {
 			return err
-		}
-		if r.controllerEnabled("daemon-status") {
-			r.warmDaemonStatuses(generation.ctx, generation.daemonStatusSync, logger)
 		}
 		if generation.decision.Enabled && generation.decision.Leader && generation.decision.Lease != nil && !generation.heartbeatStarted {
 			current := generation
@@ -1494,30 +1472,12 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 		return err
 	}
 	defer closeLease()
-	controllers, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
+	controllers, err := r.frameworkControllers(ctx, logger, store, false, decision)
 	if err != nil {
 		return err
 	}
 	loop := framework.Runner{MutationGate: r.Opts.MutationGate, Exclusive: true, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 	return loop.RunOnce(ctx, controllers...)
-}
-
-func (r *Runner) ReconcileScheduled(ctx context.Context) error {
-	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
-		return fmt.Errorf("router, bus, and store are required")
-	}
-	store := (eventedStore{SQLiteStore: r.Store, Bus: r.Bus}).withDeclaredRouter(r.currentRouter())
-	_, closeLease, err := r.oneShotHADecision(ctx, store)
-	if err != nil {
-		return err
-	}
-	defer closeLease()
-	// Wait for any controller mutation already in flight before observation.
-	if gate := r.Opts.MutationGate; gate != nil {
-		gate.Lock()
-		gate.Unlock()
-	}
-	return nil
 }
 
 func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.Decision, func(), error) {
@@ -1536,7 +1496,7 @@ func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.
 	}, nil
 }
 
-func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool, haDecision ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool, haDecision ha.Decision) ([]framework.Controller, error) {
 	opts := r.Opts
 	if haDecision.Enabled && !haDecision.Leader {
 		logger.Info("routerd cluster standby mode; mutating controllers run dry-run", "holder", haDecision.Holder, "leasePath", haDecision.LeasePath)
@@ -1675,7 +1635,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger, MutationGate: opts.MutationGate}
 	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents}
-	health := healthcheck.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNAT, IngressLive: !opts.DryRunIngress, NftablesPath: opts.NftablesPath, NftCommand: opts.NftCommand}
 	ingressService := ingressservicecontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.currentRouter(), store), Logger: logger}
 	bfd := bfdcontroller.Controller{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
@@ -1703,7 +1662,14 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		return r.effectiveRouterForReconcile(store)
 	}
 	effectiveDynamicForReconcile := func() (*api.Router, error) {
-		return r.effectiveDynamicRouterForReconcile(store, time.Now().UTC(), platform.CurrentOS())
+		view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
+		if err != nil {
+			return nil, err
+		}
+		return view.EffectiveRouter, nil
+	}
+	dynamicViewForReconcile := func() (dynamicRouteSAMView, error) {
+		return r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
 	}
 	if startAuxiliary {
 		if r.controllerEnabled("event-rule") {
@@ -1711,19 +1677,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}
 		if r.controllerEnabled("derived-event") {
 			derivedEvents.Start(ctx)
-		}
-		if r.controllerEnabled("observability-pipeline") {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return nil, DaemonStatusController{}, err
-			}
-			observabilityPipeline.Router = effective
-			if err := observabilityPipeline.Start(ctx); err != nil {
-				return nil, DaemonStatusController{}, err
-			}
-		}
-		if r.controllerEnabled("healthcheck") {
-			health.Start(ctx)
 		}
 		if r.controllerEnabled("conntrack-observer") {
 			conntrackObs.Start(ctx)
@@ -1741,7 +1694,15 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			observabilityPipeline.Router = effective
 			return didWorkError(observabilityPipeline.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+			current := daemonStatusSync
+			current.Router = r.currentRouter()
+			current.Store = store.withRouter(current.Router)
+			if event.Type == "routerd.controller.bootstrap" {
+				return current.Reconcile(ctx)
+			}
+			return current.ReconcileEvent(ctx, event)
+		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			current := daemonStatusSync
 			current.Router = r.currentRouter()
 			current.Store = store.withRouter(current.Router)
@@ -1883,7 +1844,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: ipv4StaticAddressStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			ipv4AddressMu.Lock()
 			defer ipv4AddressMu.Unlock()
-			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
+			view, err := dynamicViewForReconcile()
 			if err != nil {
 				return false, err
 			}
@@ -1942,7 +1903,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteControllerStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
+			view, err := dynamicViewForReconcile()
 			if err != nil {
 				return false, err
 			}
@@ -1953,7 +1914,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "hybrid-route", Subs: hybridRouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
+			view, err := dynamicViewForReconcile()
 			if err != nil {
 				return false, err
 			}
@@ -1965,7 +1926,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sam", Every: 30 * time.Second, Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
+			view, err := dynamicViewForReconcile()
 			if err != nil {
 				return false, err
 			}
@@ -1981,7 +1942,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
 		framework.FuncController{ControllerName: "path-mtu", Subs: pathMTUStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
+			view, err := dynamicViewForReconcile()
 			if err != nil {
 				return false, err
 			}
@@ -2134,11 +2095,12 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			if err := r.saveWhenFalseStatuses(store); err != nil {
+			effective, err := effectiveForReconcile()
+			if err != nil {
 				return false, err
 			}
 			current := bfd
-			current.Router = r.effectiveRouter(store)
+			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.currentRouter()), Subs: bgpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2185,7 +2147,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	if !opts.FirewallDisabled {
 		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Every: 30 * time.Second, Subs: firewallStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			view, err := r.effectiveDynamicRouteSAMView(store, time.Now().UTC(), platform.CurrentOS())
+			view, err := dynamicViewForReconcile()
 			if err != nil {
 				return false, err
 			}
@@ -2210,7 +2172,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}})
 	}
 	controllers = r.filterControllers(controllers)
-	return controllers, daemonStatusSync, nil
+	return controllers, nil
 }
 
 func declaredPrefixDelegationNames(effective, declared *api.Router) []string {
@@ -2399,18 +2361,6 @@ func normalizeResolverAddress(value string) string {
 		return prefix.Addr().String()
 	}
 	return value
-}
-
-func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatusController, logger *slog.Logger) {
-	warmCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := controller.Reconcile(warmCtx); err != nil && ctx.Err() == nil && logger != nil {
-		logger.Warn("initial daemon status reconcile failed", "error", err)
-	}
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
-	if err := r.Bus.Publish(ctx, event); err != nil && ctx.Err() == nil && logger != nil {
-		logger.Warn("initial controller bootstrap event failed", "error", err)
-	}
 }
 
 type mobilityARPObserverDaemonSpec struct {
@@ -3066,14 +3016,47 @@ type DaemonStatusController struct {
 }
 
 func (c DaemonStatusController) Reconcile(ctx context.Context) error {
-	sockets, arpErr := c.daemonSockets()
-	for _, socket := range sockets {
+	targets, err := c.daemonStatusTargets()
+	return c.reconcileTargets(ctx, targets, err)
+}
+
+func (c DaemonStatusController) ReconcileEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
+	targets, err := c.daemonStatusTargets()
+	filtered := targets[:0]
+	for _, target := range targets {
+		if target.matchesEvent(event) {
+			filtered = append(filtered, target)
+		}
+	}
+	return c.reconcileTargets(ctx, filtered, err)
+}
+
+type daemonStatusTarget struct {
+	apiVersion string
+	kind       string
+	instance   string
+	daemonKind string
+	socket     string
+}
+
+func (t daemonStatusTarget) matchesEvent(event daemonapi.DaemonEvent) bool {
+	if event.Resource != nil {
+		return t.apiVersion == strings.TrimSpace(event.Resource.APIVersion) &&
+			t.kind == strings.TrimSpace(event.Resource.Kind) &&
+			t.instance == strings.TrimSpace(event.Resource.Name)
+	}
+	return t.daemonKind == strings.TrimSpace(event.Daemon.Kind) &&
+		t.instance == strings.TrimSpace(event.Daemon.Instance)
+}
+
+func (c DaemonStatusController) reconcileTargets(ctx context.Context, targets []daemonStatusTarget, targetErr error) error {
+	for _, target := range targets {
 		statusCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		status, err := daemonapi.ReadStatus(statusCtx, socket)
+		status, err := daemonapi.ReadStatus(statusCtx, target.socket)
 		cancel()
 		if err != nil {
 			if c.Logger != nil && ctx.Err() == nil {
-				c.Logger.Debug("daemon status snapshot skipped", "socket", socket, "error", err)
+				c.Logger.Debug("daemon status snapshot skipped", "socket", target.socket, "error", err)
 			}
 			continue
 		}
@@ -3084,24 +3067,22 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				"conditions": observed.Conditions,
 				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			}
+			previous := c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name)
 			next := copyStatusMap(base)
 			if daemonStatusObservedOnlyKind(observed.Resource.Kind) {
-				previous := c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name)
 				next = daemonObservedOnlyStatus(previous, base, observed)
-				if observed.Resource.Kind == "DNSResolver" && observed.Resource.APIVersion == api.NetAPIVersion {
-					statusvalue.KeepUpdateTime(previous, next)
-				}
 			} else {
 				for key, value := range observed.Observed {
 					next[key] = value
 				}
 			}
+			statusvalue.KeepUpdateTime(previous, next)
 			if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
-				return errors.Join(arpErr, err)
+				return errors.Join(targetErr, err)
 			}
 		}
 	}
-	return arpErr
+	return targetErr
 }
 
 func daemonStatusObservedOnlyKind(kind string) bool {
@@ -3127,9 +3108,7 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 	if daemonObservedPromotesTopLevel(observed.Resource.Kind) && strings.TrimSpace(observed.Phase) != "" {
 		if observed.Resource.Kind == "HealthCheck" {
 			clearHealthCheckProbeRoute(next)
-			if strings.TrimSpace(fmt.Sprint(daemonObserved["lastResult"])) == healthcheck.ResultPassed {
-				clearRecoveredHealthCheckFailureStatus(next)
-			}
+			clearHealthCheckTransientStatus(next)
 		}
 		for key, value := range daemonObserved {
 			next[key] = value
@@ -3161,10 +3140,9 @@ func clearHealthCheckProbeRoute(status map[string]any) {
 	}
 }
 
-// clearRecoveredHealthCheckFailureStatus removes event-only failure details
-// once the health-check daemon has reported a successful probe. Historical
-// timestamps (for example lastFailureTime) are deliberately retained.
-func clearRecoveredHealthCheckFailureStatus(status map[string]any) {
+// clearHealthCheckTransientStatus removes the prior probe's fields before the
+// daemon's current observation is promoted. Historical timestamps remain.
+func clearHealthCheckTransientStatus(status map[string]any) {
 	for _, key := range []string{
 		"result",
 		"message",
@@ -3233,15 +3211,15 @@ func normalizedDaemonObservedValue(kind, key, value string) any {
 	return value
 }
 
-func (c DaemonStatusController) daemonSockets() ([]string, error) {
+func (c DaemonStatusController) daemonStatusTargets() ([]daemonStatusTarget, error) {
 	seen := map[string]bool{}
-	var out []string
-	add := func(socket string) {
+	var out []daemonStatusTarget
+	add := func(apiVersion, kind, instance, daemonKind, socket string) {
 		if socket == "" || seen[socket] {
 			return
 		}
 		seen[socket] = true
-		out = append(out, socket)
+		out = append(out, daemonStatusTarget{apiVersion: apiVersion, kind: kind, instance: instance, daemonKind: daemonKind, socket: socket})
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
@@ -3258,14 +3236,14 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 				defaults, _ := platform.Current()
 				socket = filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource.Metadata.Name+".sock")
 			}
-			add(socket)
+			add(api.NetAPIVersion, "DHCPv6PrefixDelegation", resource.Metadata.Name, "routerd-dhcpv6-client", socket)
 		case "DHCPv4Client":
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
 				defaults, _ := platform.Current()
 				socket = filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource.Metadata.Name+".sock")
 			}
-			add(socket)
+			add(api.NetAPIVersion, "DHCPv4Client", resource.Metadata.Name, "routerd-dhcpv4-client", socket)
 		case "HealthCheck":
 			spec, err := resource.HealthCheckSpec()
 			if err != nil || healthCheckDisabled(spec) {
@@ -3276,14 +3254,14 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 				defaults, _ := platform.Current()
 				socket = filepath.Join(defaults.RuntimeDir, "healthcheck", resource.Metadata.Name+".sock")
 			}
-			add(socket)
+			add(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, healthcheck.DaemonKind, socket)
 		case "DNSResolver":
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
 				defaults, _ := platform.Current()
 				socket = filepath.Join(defaults.RuntimeDir, "dns-resolver", resource.Metadata.Name+".sock")
 			}
-			add(socket)
+			add(api.NetAPIVersion, "DNSResolver", resource.Metadata.Name, "routerd-dns-resolver", socket)
 		case "PPPoESession":
 			_, err := resource.PPPoESessionSpec()
 			if err != nil {
@@ -3294,7 +3272,7 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 				defaults, _ := platform.Current()
 				socket = filepath.Join(defaults.RuntimeDir, "pppoe-client", resource.Metadata.Name+".sock")
 			}
-			add(socket)
+			add(api.NetAPIVersion, "PPPoESession", resource.Metadata.Name, "routerd-pppoe-client", socket)
 		case "IPv6RouterAdvertisement":
 			if _, err := resource.IPv6RouterAdvertisementSpec(); err != nil {
 				continue
@@ -3304,7 +3282,7 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 				defaults, _ := platform.Current()
 				socket = filepath.Join(defaults.RuntimeDir, "ra-observer", resource.Metadata.Name+".sock")
 			}
-			add(socket)
+			add(api.NetAPIVersion, "RogueRADetector", resource.Metadata.Name, "routerd-ra-observer", socket)
 		}
 	}
 	runner := Runner{Router: c.Router, Opts: Options{DaemonSockets: c.DaemonSockets}}
@@ -3314,7 +3292,7 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 	}
 	arpSpecs := runner.mobilityARPObserverDaemonSpecsFromIntents(mobilityARPObserverIntentsFromRecords(records, time.Now().UTC()))
 	for _, spec := range arpSpecs {
-		add(spec.Socket)
+		add(api.MobilityAPIVersion, "ARPObserver", spec.ResourceName, "routerd-arp-observer", spec.Socket)
 	}
 	return out, err
 }

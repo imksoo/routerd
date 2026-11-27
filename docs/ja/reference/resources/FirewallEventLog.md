@@ -56,7 +56,7 @@
 
 | YAML | 指定要否 | 型・制約 | 項目の意味と既定値 |
 | --- | --- | --- | --- |
-| `spec.enabled` | *任意* | boolean | 既定falseです。trueで収集サービスとグループログ設定を有効にし、現行のサービス描画ではDPI分類ヘルパーも要求します。 |
+| `spec.enabled` | *任意* | boolean | 既定falseです。trueでファイアウォールログ収集サービスと、パケットを直接分類するnDPIエージェントを起動します。 |
 | `spec.path` | **条件付き必須** | string | SQLite DBのパスです。既定はLinuxで/var/lib/routerd/firewall-logs.db、FreeBSDで/var/db/routerd/firewall-logs.dbです。JSON行形式の出力ファイルではありません。 |
 | `spec.events` | *任意* | array | deny・allow・rateLimit・connLimitを受け付け、既定は空です。検証のみで、現在の収集入力・生成ログの絞り込みには使いません。 |
 | `spec.fromZones` | *任意* | array | 既定は空です。送信元としてFirewallZone名またはselfを検証しますが、実行時のログ絞り込みには使いません。 |

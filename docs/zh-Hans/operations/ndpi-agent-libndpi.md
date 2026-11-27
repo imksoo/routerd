@@ -26,7 +26,8 @@ sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
 
 响应中应包含 `"libndpiLoaded": true`。
 
-## Configure
+## 配置
 
-`routerd-dpi-classifier` 需以 `--engine auto` 或 `--engine ndpi-agent` 搭配指向代理程序 socket 的 `--ndpi-agent-socket` 进行配置。
-建议使用 `auto`，以便在原生代理程序无法使用时退回至内置分类器。
+启用 `FirewallEventLog` 资源。routerd 随后启动
+`routerd-firewall-logger` 和 `routerd-ndpi-agent`，日志程序通过 Unix
+socket 将采样数据包直接发送给代理程序。不再使用独立的分类进程，也没有内置分类器的后备路径。

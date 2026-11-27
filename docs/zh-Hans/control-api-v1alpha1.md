@@ -29,6 +29,12 @@ routerd 与受管理的守护进程会在本机的 Unix domain socket 上公开 
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 通信流量历史 |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | 防火墙日志 |
 
+## DHCP 租约 hook
+
+dnsmasq hook 不是 Control API endpoint。`routerd-dhcp-event-relay` 会将每次通知
+规范化并写入有上限的本地队列 `dhcp-events/pending.db`。`routerd serve` 在
+controller 启动后按提交顺序读取队列，因此在 routerd 重启期间已接纳的通知不会丢失。
+
 ## SAM enrollment endpoint
 
 Dynamic SAM enrollment 也使用同一 API handler，但 RR 只能通过 enrollment runbook 中明确
@@ -71,10 +77,13 @@ client/controller，而不是自行解释这些响应。
 | --- | --- |
 | `GET /v1/healthz` | 存活确认（liveness check） |
 | `GET /v1/status` | 守护进程的状态及相关资源的状态 |
-| `GET /v1/events` | 事件日志。可通过 query 参数指定 `since`、`wait`、`topic` |
+| `GET /v1/events` | ARP、DHCP 客户端、PPPoE 及 healthcheck 守护进程的事件历史；支持 `since`、`wait`、`topic` |
 | `POST /v1/commands/reload` | 重新加载配置 |
 | `POST /v1/commands/renew` | 各守护进程的主动操作（DHCPv6 Renew、DHCPv4 更新租约、立即执行健康探测等） |
 | `POST /v1/commands/stop` | 安全停止 |
+
+DNS 解析器与 RA observer 通过 `/v1/status` 返回当前状态，但不保留另一份状态文件、
+事件旁路文件或 `/v1/events` 历史。
 
 `renew` 的含义因守护进程而异。DHCPv6 为发送 Renew、DHCPv4 为更新租约、healthcheck 为立即执行探测。
 
@@ -109,6 +118,7 @@ client/controller，而不是自行解释这些响应。
 }
 ```
 
-routerd 将事件持久化至 SQLite。
-受管理的守护进程另外也会记录至各自的 `events.jsonl`。
-`EventRule` 与 `DerivedEvent` 以此流为输入，发布虚拟事件。
+routerd 将事件持久化至 SQLite。ARP、DHCP 客户端、PPPoE 及 healthcheck 守护进程
+还会将协议事件写入各自的 `events.jsonl`。DNS 解析器与 RA observer 的状态直接从
+`/v1/status` 读取，不再写入重复的旁路文件。`EventRule` 与 `DerivedEvent` 使用
+routerd 的事件流。

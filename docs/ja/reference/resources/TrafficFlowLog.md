@@ -38,8 +38,8 @@
 | `spec.enabled` | *任意* | boolean | 既定はfalseです。trueは選ばれたリソースの記録を有効にしますが、取得不能な接続情報を利用可能にする指定ではありません。 |
 | `spec.path` | **条件付き必須** | string | ルーター上のSQLite DBパスです。通常の設定検証ではenabled時に必須です。読み取り側には/var/lib/routerd/traffic-flows.dbの内部既定値がありますが、enabled時の指定要件は免除されません。 |
 | `spec.source` | *任意* | string; enum=["", "conntrack"] | 省略またはconntrackのみを指定でき、実効ラベルの既定はconntrackです。別の収集処理や任意のバックエンドを選ぶ項目ではありません。 |
-| `spec.includeApplicationLayer` | *任意* | boolean | 既定はfalseです。enabledとともにtrueにするとDPIヘルパーとLinuxのDPI観測ルールを要求し、nDPIエージェントの利用可否をapplicationLayerとして状態に記録します。libndpiのロードや分類結果の存在は保証しません。 |
-| `spec.includeTLSSNI` | *任意* | boolean | 既定はfalseです。enabledとともにtrueにすると同じDPIヘルパー・観測経路を要求します。TLS復号やSNI取得の保証、保存内容の独立した秘匿化・フィルタースイッチではなく、暗号化・未観測の名前は取得できない場合があります。 |
+| `spec.includeApplicationLayer` | *任意* | boolean | 既定はfalseです。enabledとともにtrueにすると、FirewallEventLogも有効な場合にLinuxのDPI観測ルールを追加し、共有nDPIエージェントの状態をapplicationLayerに記録します。この項目だけではDPIサービスを起動せず、分類結果も保証しません。 |
+| `spec.includeTLSSNI` | *任意* | boolean | 既定はfalseです。enabledとともにtrueにすると、FirewallEventLogを使う同じ観測経路を要求します。DPIサービスの起動、TLS復号、SNI取得、保存項目の秘匿化を独立して制御する項目ではありません。 |
 
 実装: [pkg/api/specs.go](https://github.com/imksoo/routerd/blob/main/pkg/api/specs.go) · [pkg/config/validate_firewall.go](https://github.com/imksoo/routerd/blob/main/pkg/config/validate_firewall.go) · [pkg/controller/conntrackobserver/controller.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/conntrackobserver/controller.go) · [pkg/render/dpi_systemd.go](https://github.com/imksoo/routerd/blob/main/pkg/render/dpi_systemd.go) · [pkg/render/nftables.go](https://github.com/imksoo/routerd/blob/main/pkg/render/nftables.go) · [pkg/controller/chain/logretention.go](https://github.com/imksoo/routerd/blob/main/pkg/controller/chain/logretention.go)
 

@@ -132,7 +132,6 @@ type DiskUsage = {
 };
 
 type DPIStatus = {
-  classifier?: DPIServiceStatus;
   agent?: DPIServiceStatus;
 };
 
@@ -140,7 +139,6 @@ type DPIServiceStatus = {
   available?: boolean;
   socket?: string;
   engine?: string;
-  activeEngine?: string;
   libndpiLoaded?: boolean;
   libndpiVersion?: string;
   reason?: string;
@@ -3149,7 +3147,7 @@ function App() {
                     <Metric label="CPU" value={systemCPULabel(summary?.systemUsage)} />
                     <Metric label="memory" value={systemMemoryLabel(summary?.systemUsage)} />
                     <Metric label="disk" value={systemDiskLabel(summary?.systemUsage)} />
-                    <Metric label="DPI latency" value={dpiLatencyLabel(summary?.dpi)} />
+                    <Metric label="nDPI" value={summary?.dpi?.agent?.libndpiLoaded ? "active" : "-"} />
                   </div>
                 </div>
                 <MetricCharts samples={metricSamples} />
@@ -4081,21 +4079,17 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
 
 function DPIServiceSummary({ dpi }: { dpi?: DPIStatus }) {
   const styles = useStyles();
-  if (!dpi?.classifier && !dpi?.agent) return <Text className={styles.muted}>No DPI service sockets found</Text>;
-  const classifier = dpi.classifier;
+  if (!dpi?.agent) return <Text className={styles.muted}>No DPI service socket found</Text>;
   const agent = dpi.agent;
-  const classified = Number(classifier?.stats?.agentClassified ?? 0) + Number(classifier?.stats?.builtinClassified ?? 0) || Number(agent?.stats?.classifiedPackets ?? agent?.stats?.classified ?? 0);
-  const errors = Number(classifier?.stats?.agentErrors ?? 0) + Number(agent?.stats?.errorPackets ?? agent?.stats?.errors ?? 0);
-  const timeouts = Number(classifier?.stats?.timeoutErrors ?? 0);
+  const classified = Number(agent?.stats?.classifiedPackets ?? agent?.stats?.classified ?? 0);
+  const errors = Number(agent?.stats?.errorPackets ?? agent?.stats?.errors ?? 0);
   return (
     <div className={styles.grid}>
-      <Metric label="classifier" value={classifier?.activeEngine || classifier?.engine || (classifier?.error ? "error" : "-")} />
       <Metric label="nDPI" value={agent?.libndpiLoaded ? "loaded" : agent?.error ? "error" : agent ? "unavailable" : "-"} />
       <Metric label="classified" value={classified ? String(classified) : "-"} />
       <Metric label="errors" value={errors ? String(errors) : "0"} />
-      <Metric label="timeouts" value={timeouts ? String(timeouts) : "0"} />
-      {classifier?.reason || classifier?.error || agent?.reason || agent?.error ? (
-        <Text size={200} className={styles.muted}>{classifier?.reason || classifier?.error || agent?.reason || agent?.error}</Text>
+      {agent?.reason || agent?.error ? (
+        <Text size={200} className={styles.muted}>{agent?.reason || agent?.error}</Text>
       ) : null}
     </div>
   );
@@ -8927,14 +8921,6 @@ function systemDiskLabel(usage?: SystemUsage) {
   const disk = usage?.disks?.[0];
   if (!disk?.usedPercent) return "-";
   return `${formatPercent(disk.usedPercent)} / ${formatBytes(disk.totalBytes)}`;
-}
-
-function dpiLatencyLabel(dpi?: DPIStatus) {
-  const stats = dpi?.classifier?.stats;
-  const average = Number(stats?.averageLatencyMs);
-  const max = Number(stats?.maxLatencyMs);
-  if (!Number.isFinite(average) || average <= 0) return "-";
-  return `${formatMilliseconds(average)} avg / ${formatMilliseconds(max)} max`;
 }
 
 function slowestControllerLabel(controllers: ControllerStatus[]) {

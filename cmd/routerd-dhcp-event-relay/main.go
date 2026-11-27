@@ -3,18 +3,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dhcpeventqueue"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -44,13 +38,7 @@ func main() {
 
 func run(args []string) error {
 	defaults, _ := platform.Current()
-	fs := flag.NewFlagSet("routerd-dhcp-event-relay", flag.ContinueOnError)
-	socket := fs.String("socket", defaults.SocketFile(), "explicit control socket: submit through the API instead of the local durable queue")
-	fs.SetOutput(os.Stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	event, err := eventFromArgs(fs.Args(), os.Environ())
+	event, err := eventFromArgs(args, os.Environ())
 	if err != nil {
 		return err
 	}
@@ -58,51 +46,17 @@ func run(args []string) error {
 		return fmt.Errorf("usage: routerd-dhcp-event-relay [add|old|del] MAC IP HOSTNAME")
 	}
 	observedAt := time.Now().UTC()
-	explicitSocket := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "socket" {
-			explicitSocket = true
-		}
-	})
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	if !explicitSocket {
-		return dhcpeventqueue.Store(ctx, defaults.DHCPEventQueueFile(), event, observedAt)
-	}
-	body, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var dialer net.Dialer
-		return dialer.DialContext(ctx, "unix", *socket)
-	}}}
-	defer client.CloseIdleConnections()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix"+controlapi.Prefix+"/dhcp-lease-event", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Close = true
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("routerd returned %s", resp.Status)
-	}
-	return nil
+	return dhcpeventqueue.Store(ctx, defaults.DHCPEventQueueFile(), event, observedAt)
 }
 
-func eventFromArgs(args []string, env []string) (controlapi.DHCPLeaseEventRequest, error) {
-	event := controlapi.DHCPLeaseEventRequest{
-		TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DHCPLeaseEvent"},
-	}
+func eventFromArgs(args []string, env []string) (dhcpeventqueue.LeaseEvent, error) {
+	event := dhcpeventqueue.LeaseEvent{}
 	if len(args) > 0 {
 		action, err := normalizeAction(args[0])
 		if err != nil {
-			return controlapi.DHCPLeaseEventRequest{}, err
+			return dhcpeventqueue.LeaseEvent{}, err
 		}
 		event.Action = action
 	}

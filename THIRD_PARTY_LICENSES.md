@@ -198,7 +198,7 @@ feature is explicitly enabled.
 
 | Component | Package names | License | Source URL | Notes |
 | --- | --- | --- | --- | --- |
-| nDPI runtime | `libndpi-bin` (Debian/Ubuntu), `ndpi` (other package managers where available) | `LGPL-3.0-only` or upstream package license metadata | <https://github.com/ntop/nDPI> | Used by `routerd-dpi-classifier` as an external tool / IPC dependency; routerd does not statically link nDPI. |
+| nDPI runtime | `libndpi-bin` (Debian/Ubuntu), `ndpi` (other package managers where available) | `LGPL-3.0-only` or upstream package license metadata | <https://github.com/ntop/nDPI> | Dynamically linked by the optional `routerd-ndpi-agent`; the main routerd package does not link nDPI. |
 
 ## Source availability
 

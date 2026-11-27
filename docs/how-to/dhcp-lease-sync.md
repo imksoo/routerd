@@ -154,11 +154,8 @@ a running control socket. Linux uses `/var/lib/routerd`, FreeBSD uses
 Configuration paths, runtime socket paths, and `--state-file` do not redefine
 this shared directory. `--state-file` still selects only the main state DB.
 No additional service or dnsmasq configuration change is required.
-
-A manual relay invocation with explicit `--socket` keeps HTTP transport and
-uses the receiving daemon's queue. It does not write a second local queue or
-retry through a different transport. An unavailable socket therefore remains
-an explicit failure. Use this API mode to target a daemon with a custom socket, rather than inferring persistence paths from that socket.
+The relay always uses this durable queue; it has no direct socket or Control API
+delivery mode.
 
 Bounds and ownership:
 

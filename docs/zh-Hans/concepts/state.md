@@ -8,7 +8,7 @@ sidebar_position: 5
 
 routerd 将声明的意图与观测到的状态分开处理。
 YAML 是用户管理的意图。
-SQLite、租约文件、events.jsonl 则是 routerd 及专属守护进程观测到的状态。
+SQLite、租约文件及部分守护进程的事件日志，是 routerd 与专属守护进程观测到的状态。
 
 
 ## 状态的存放位置
@@ -40,7 +40,9 @@ FreeBSD 上，配置与可执行文件同样存放在 `/usr/local` 下。
 ## 事件
 
 routerd 及专属守护进程会将状态变化记录为事件。
-事件保存在 SQLite 的 `events` 表格，以及各守护进程的 `events.jsonl` 中。
+routerd 将事件流保存至 SQLite 的 `events` 表格。ARP、DHCP 客户端、PPPoE 及
+healthcheck 守护进程还会将协议事件写入 `events.jsonl`。DNS 解析器与 RA observer
+的状态通过 `/v1/status` 实时读取，不保留重复的状态或事件旁路文件。
 EventRule 和 DerivedEvent 会利用这些事件和状态，生成虚拟的状态变化。
 
 ## 应用世代

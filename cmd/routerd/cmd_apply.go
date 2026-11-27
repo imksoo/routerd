@@ -321,9 +321,6 @@ func desiredObjectStatusKeysForOS(router *api.Router, store staleObjectStatusCle
 	for _, candidate := range routers {
 		if targetOS == platform.OSLinux {
 			out[api.SystemAPIVersion+"/ServiceUnit/"+render.BGPUnitName] = true
-			if render.RouterWantsDPIClassifier(candidate) {
-				out[api.SystemAPIVersion+"/ServiceUnit/"+render.DPIClassifierUnitName] = true
-			}
 			if render.RouterWantsNDPIAgent(candidate) {
 				out[api.SystemAPIVersion+"/ServiceUnit/"+render.NDPIAgentUnitName] = true
 			}

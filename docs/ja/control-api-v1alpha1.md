@@ -32,6 +32,13 @@ routerd と管理対象デーモンは、ローカルの Unix domain socket 上�
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 通信フロー履歴 |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | ファイアウォールログ |
 
+## DHCP リースフック
+
+dnsmasqのフックはControl APIではありません。`routerd-dhcp-event-relay`が
+各通知を正規化して、上限付きローカルキュー`dhcp-events/pending.db`へ保存します。
+`routerd serve`はコントローラーの起動後に保存順でキューを取り込むため、routerdの
+再起動中に受理した通知も失いません。
+
 ## SAM enrollment endpoint
 
 Dynamic SAM enrollment も同じ API handler を使いますが、RR が公開するのは enrollment
@@ -92,10 +99,13 @@ FreeBSD では、対応するパスは `/var/run/routerd/...` です。
 | --- | --- |
 | `GET /v1/healthz` | liveness check |
 | `GET /v1/status` | デーモンの状態と、関連リソースの状態 |
-| `GET /v1/events` | event log。`since`、`wait`、`topic` を query で指定します |
+| `GET /v1/events` | ARP・DHCPクライアント・PPPoE・healthcheckデーモンのイベント履歴。`since`、`wait`、`topic`を指定できます |
 | `POST /v1/commands/reload` | 設定の再読み込み |
 | `POST /v1/commands/renew` | デーモンごとの能動操作（DHCPv6 Renew、DHCPv4 のリース更新、即時の health probe など） |
 | `POST /v1/commands/stop` | 安全に停止 |
+
+DNSリゾルバーとRA observerは`/v1/status`で現在状態を返しますが、別の状態ファイル、
+イベント副ファイル、`/v1/events`履歴は持ちません。
 
 `renew` の意味はデーモンごとに異なります。DHCPv6 は Renew の送信、DHCPv4 はリース更新、healthcheck は即時の probe です。
 
@@ -137,6 +147,7 @@ sequenceは同じ読取の `commandProbeCount` と一致します。保持する
 }
 ```
 
-routerd は event を SQLite に永続化します。
-管理対象デーモンは、加えて自身の `events.jsonl` にも記録します。
-`EventRule` と `DerivedEvent` は、このストリームを入力にして仮想 event を発行します。
+routerdはeventをSQLiteに永続化します。ARP・DHCPクライアント・PPPoE・healthcheck
+デーモンは、プロトコルイベントを自身の`events.jsonl`にも記録します。DNSリゾルバーと
+RA observerの状態は重複する副ファイルではなく`/v1/status`から読み取ります。
+`EventRule`と`DerivedEvent`はrouterdのイベントストリームを入力にします。

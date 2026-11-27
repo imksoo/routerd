@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+- 移除未使用的周期应用选项、DNS 解析器与 RA observer 的重复状态／事件历史、DHCP relay 的 socket／API 直送路径、旧的进程内 healthcheck runner，以及独立 DPI classifier 进程。保留守护进程实时状态、DHCP 通知持久队列、独立 healthcheck unit 与 ndpi-agent 直接分类。
+
 ## v20261127.1548
 
 - DNS 解析器将监听器异常退出和应答发送失败视为错误，在缓存锁外记录事件，并且仅在上游 DNS 服务器状态发生变化时记录恢复正常或不可用事件。

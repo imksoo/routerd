@@ -35,7 +35,6 @@ state. Highlights:
 | `GET /api/control.routerd.net/v1alpha1/dns-queries` | DNS query history |
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | traffic flow history |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | firewall log entries |
-| `POST /api/control.routerd.net/v1alpha1/dhcp-lease-event` | local dnsmasq lease-hook event |
 
 ## SAM enrollment endpoints
 
@@ -64,26 +63,12 @@ interpreting these responses themselves.
 
 ## DHCP lease hook
 
-`POST /api/control.routerd.net/v1alpha1/dhcp-lease-event` is a privileged,
-local hook endpoint for dnsmasq lease changes; it is not a remote-management or
-general-purpose event API. `routerd-dhcp-event-relay` runs once for each
-dnsmasq callback and normalizes dnsmasq's raw callback verbs. The managed hook
-(with no flags) commits directly to a bounded local queue, so a routerd restart
-does not discard the callback. An explicitly supplied `--socket` retains the
-HTTP transport: the selected daemon commits to its queue before returning
-`accepted`. There is no simultaneous local enqueue or fallback, and an
-unreachable explicit socket still returns an error.
-
-Direct callers must send only the canonical `action` values `added`, `renewed`,
-or `removed`. The raw dnsmasq verbs `add`, `old`, and `del` are accepted only at
-the relay boundary. `ip` is required; `mac`, `hostname`, and `interface` are
-optional. `interface` is the value reported by dnsmasq for the lease hook; raw
-environment variables are never forwarded through this API.
-
-The existing serve process drains accepted callbacks in commit order after its
-controllers have started. Queue/storage failure is an error, not acceptance.
-Delivery is at least once through sticky metadata and the durable event journal;
-a crash after journal commit but before queue deletion may duplicate history.
+The dnsmasq hook is not a Control API endpoint. `routerd-dhcp-event-relay`
+normalizes each callback and commits it to the bounded local
+`dhcp-events/pending.db` queue. `routerd serve` drains that queue in commit
+order after its controllers have started, so a routerd restart does not lose
+an accepted callback. A crash after journal commit but before queue deletion
+may duplicate history.
 `attributes.observedAt` preserves the original timestamp, while `createdAt`
 remains the journal ingestion time. Live subscriber delivery retains the bus
 contract and is not an acknowledgement from every downstream daemon.
@@ -142,10 +127,13 @@ On FreeBSD, the equivalent path is `/var/run/routerd/...`.
 | --- | --- |
 | `GET /v1/healthz` | Liveness check |
 | `GET /v1/status` | Daemon status and related resource state |
-| `GET /v1/events` | Event log; supports `since`, `wait`, `topic` query parameters |
+| `GET /v1/events` | Event log on ARP, DHCP client, PPPoE, and healthcheck daemons; supports `since`, `wait`, `topic` |
 | `POST /v1/commands/reload` | Re-read configuration |
 | `POST /v1/commands/renew` | Daemon-specific active operation (DHCPv6 Renew, DHCPv4 lease refresh, immediate health probe, etc.) |
 | `POST /v1/commands/stop` | Graceful shutdown |
+
+DNS resolver and RA observer daemons expose live `/v1/status` but do not keep a
+second state file, event side file, or `/v1/events` history.
 
 The semantics of `renew` differ per daemon: DHCPv6 sends a Renew, DHCPv4 refreshes the lease, healthcheck triggers an immediate probe.
 
@@ -189,4 +177,8 @@ Events have a topic and attributes:
 }
 ```
 
-routerd persists events into SQLite. Managed daemons additionally keep them in their own `events.jsonl` files. `EventRule` and `DerivedEvent` consume this stream to emit virtual events.
+routerd persists events into SQLite. ARP, DHCP client, PPPoE, and healthcheck
+daemons additionally keep their protocol events in `events.jsonl`. DNS resolver
+and RA observer state is read live from `/v1/status` instead of a duplicate
+side file. `EventRule` and `DerivedEvent` consume the routerd event stream to
+emit virtual events.

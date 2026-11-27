@@ -35,7 +35,7 @@ The response should include `"libndpiLoaded": true`.
 
 ## Configure
 
-`routerd-dpi-classifier` must be configured with `--engine auto` or
-`--engine ndpi-agent` and an `--ndpi-agent-socket` pointing at the agent socket.
-`auto` is recommended because it falls back to the built-in classifier if the
-native agent is unavailable.
+Enable a `FirewallEventLog` resource. routerd then starts
+`routerd-firewall-logger` and `routerd-ndpi-agent`; the logger sends sampled
+packets directly to the agent over its Unix socket. There is no separate
+classifier process or built-in fallback.

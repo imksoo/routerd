@@ -38,10 +38,6 @@ type Controller struct {
 	running map[string]runningExporter
 }
 
-func (c *Controller) Start(ctx context.Context) error {
-	return c.Reconcile(ctx)
-}
-
 func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Bus == nil || c.Events == nil {
 		return nil

@@ -5,7 +5,10 @@ slug: /operations/state-database
 
 # State database
 
-routerd persists state and events in SQLite. Each managed daemon additionally keeps its own lease or state file and an event log.
+routerd persists state and events in SQLite. Protocol clients keep the lease or
+state files needed to resume operation. ARP, DHCP client, PPPoE, and healthcheck
+daemons also keep protocol event logs; DNS resolver and RA observer state is
+read live through `/v1/status` without duplicate side files.
 
 ## Key paths
 
@@ -16,7 +19,7 @@ routerd persists state and events in SQLite. Each managed daemon additionally ke
 | DHCPv4 lease | `/var/lib/routerd/dhcpv4-client/<name>/lease.json` |
 | PPPoE state | `/var/lib/routerd/pppoe-client/<name>/state.json` |
 | HealthCheck state | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| Per-daemon events | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
+| Protocol events (ARP, DHCP clients, PPPoE, HealthCheck) | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
 ## Events table
 

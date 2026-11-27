@@ -37,19 +37,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		out[name] = data
 	}
-	dpiSocket := ""
-	if RouterWantsDPIClassifier(router) {
-		dpiSocket = "/var/run/routerd/dpi-classifier/default.sock"
-	}
 	wantsNDPIAgent := RouterWantsNDPIAgent(router)
-	if RouterWantsDPIClassifier(router) {
-		name := freeBSDServiceName(DPIClassifierUnitName)
-		data, err := FreeBSDRCDScript(name, DPIClassifierSystemdSpec("/var/run"))
-		if err != nil {
-			return nil, err
-		}
-		out[name] = data
-	}
 	if wantsNDPIAgent {
 		name := freeBSDServiceName(NDPIAgentUnitName)
 		if !explicit[name] {
@@ -210,7 +198,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		if explicit[name] {
 			continue
 		}
-		data, err := FreeBSDRCDScript(name, freeBSDFirewallLoggerSystemdSpec(spec, dpiSocket))
+		data, err := FreeBSDRCDScript(name, freeBSDFirewallLoggerSystemdSpec(spec))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
@@ -343,8 +331,6 @@ func freeBSDDNSResolverSystemdSpec(name string, spec api.DNSResolverSpec) api.Sy
 	unit := DNSResolverSystemdSpec(name, spec, "/usr/local/sbin/routerd-dns-resolver", "/var/db/routerd/dns-resolver/"+name+"/config.json")
 	unit.ExecStart = append(unit.ExecStart,
 		"--socket", "/var/run/routerd/dns-resolver/"+name+".sock",
-		"--state-file", "/var/db/routerd/dns-resolver/"+name+"/state.json",
-		"--event-file", "/var/db/routerd/dns-resolver/"+name+"/events.jsonl",
 	)
 	return unit
 }
@@ -583,25 +569,18 @@ func safeWireGuardKeyFilePart(value string) string {
 	return value
 }
 
-func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
+func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
 		path = (platform.Defaults{StateDir: "/var/db/routerd"}).FirewallLogFile()
 	}
-	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--pflog-interface", "pflog0"}
-	wants := []string{"NETWORKING"}
-	after := []string{"NETWORKING"}
-	if dpiSocket != "" {
-		exec = append(exec, "--dpi-socket", dpiSocket)
-		wants = append(wants, "routerd_dpi_classifier")
-		after = append(after, "routerd_dpi_classifier")
-	}
+	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--pflog-interface", "pflog0", "--dpi-socket", "/var/run/routerd/ndpi-agent/default.sock"}
 	noNewPrivileges := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd firewall log collector",
 		ExecStart:                exec,
-		Wants:                    wants,
-		After:                    after,
+		Wants:                    []string{"NETWORKING", freeBSDServiceName(NDPIAgentUnitName)},
+		After:                    []string{"NETWORKING", freeBSDServiceName(NDPIAgentUnitName)},
 		Restart:                  "always",
 		RestartSec:               "5s",
 		RuntimeDirectory:         []string{"routerd"},

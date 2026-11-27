@@ -8,7 +8,8 @@ sidebar_position: 5
 
 routerd separates declared intent from observed state.
 YAML is the intent you manage.
-SQLite, lease files, and `events.jsonl` are state that routerd and its dedicated daemons observe.
+SQLite, lease files, and selected daemon event logs are state that routerd and
+its dedicated daemons observe.
 
 
 ## Where state lives
@@ -40,7 +41,10 @@ When that confirmation is missing, routerd suppresses the matching AAAA records,
 ## Events
 
 routerd and its daemons record state changes as events.
-Events are persisted in the SQLite `events` table and in per-daemon `events.jsonl` files.
+routerd persists its event stream in the SQLite `events` table. ARP, DHCP
+client, PPPoE, and healthcheck daemons also keep their protocol events in
+`events.jsonl`. DNS resolver and RA observer state is read live through
+`/v1/status`; those daemons do not keep duplicate state or event side files.
 `EventRule` and `DerivedEvent` consume that stream to synthesize virtual state changes.
 
 ## Apply generations

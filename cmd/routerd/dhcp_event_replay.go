@@ -11,16 +11,16 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dhcpeventqueue"
 )
 
 // A callback captured before this consumer started is historical. The current
 // lease file may already contain a newer renewal or a different owner of the IP.
 // Only an action consistent with that authoritative state may reach live DNS or
 // mobility consumers. Everything else is still journaled with its original time.
-func dhcpReplayDisposition(router *api.Router, fallback string, req controlapi.DHCPLeaseEventRequest, now time.Time) (string, error) {
+func dhcpReplayDisposition(router *api.Router, fallback string, req dhcpeventqueue.LeaseEvent, now time.Time) (string, error) {
 	hasDHCP := false
 	if router != nil {
 		for _, r := range router.Spec.Resources {

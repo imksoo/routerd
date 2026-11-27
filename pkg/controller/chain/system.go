@@ -645,17 +645,17 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.cleanupStaleHealthCheckUnits(ctx); err != nil {
 			return err
 		}
-		if render.RouterWantsDPIClassifier(c.Router) {
-			dpiSpec := render.DPIClassifierSystemdSpec("/run")
-			dpiSpec.Environment = mergeStringEnvs(dpiSpec.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallEventLog", dpiSpec); err != nil {
-				return err
-			}
-		}
 		if render.RouterWantsNDPIAgent(c.Router) {
 			ndpiSpec := render.NDPIAgentSystemdSpec("/run")
 			ndpiSpec.Environment = mergeStringEnvs(ndpiSpec.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallEventLog", ndpiSpec); err != nil {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "FirewallEventLog", ndpiSpec); err != nil {
+				return err
+			}
+		} else {
+			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog"); err != nil {
+				return err
+			}
+			if err := c.cleanupLongLivedSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "FirewallEventLog"); err != nil {
 				return err
 			}
 		}
@@ -670,11 +670,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if !spec.Enabled {
 				continue
 			}
-			dpiSocket := ""
-			if render.RouterWantsDPIClassifier(c.Router) {
-				dpiSocket = "/run/routerd/dpi-classifier/default.sock"
-			}
-			unit := render.FirewallLoggerSystemdSpec(spec, dpiSocket)
+			unit := render.FirewallLoggerSystemdSpec(spec)
 			unit.Environment = mergeStringEnvs(unit.Environment, telemetryEnv)
 			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog/"+resource.Metadata.Name, unit); err != nil {
 				return err
@@ -1329,7 +1325,6 @@ func raObserverUnitSpec(resource, ifname string, telemetryEnv []string) api.Syst
 		"--resource", resource,
 		"--interface", ifname,
 		"--socket", "/run/routerd/ra-observer/" + resource + ".sock",
-		"--event-file", "/var/log/routerd/ra-observer-" + resource + ".events.jsonl",
 	}
 	return api.SystemdUnitSpec{
 		Description:              "routerd IPv6 RA observer " + resource,

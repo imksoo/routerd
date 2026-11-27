@@ -17,12 +17,11 @@ import (
 )
 
 func (h Handler) dpiStatus(ctx context.Context) *DPIStatus {
-	classifier := probeDPIService(ctx, "/run/routerd/dpi-classifier/default.sock", "/v1/status")
 	agent := probeDPIService(ctx, "/run/routerd/ndpi-agent/default.sock", "/v1/status")
-	if classifier == nil && agent == nil {
+	if agent == nil {
 		return nil
 	}
-	return &DPIStatus{Classifier: classifier, Agent: agent}
+	return &DPIStatus{Agent: agent}
 }
 
 func probeDPIService(ctx context.Context, socket, path string) *DPIServiceStatus {
@@ -63,21 +62,12 @@ func dpiServiceStatusFromMap(socket string, raw map[string]any) *DPIServiceStatu
 		Available:      true,
 		Socket:         socket,
 		Engine:         stringMapValue(raw, "engine"),
-		ActiveEngine:   stringMapValue(raw, "activeEngine"),
 		LibNDPILoaded:  boolMapValue(raw, "libndpiLoaded"),
 		LibNDPIVersion: stringMapValue(raw, "libndpiVersion"),
 		Reason:         stringMapValue(raw, "reason"),
 	}
 	if stats, ok := raw["stats"].(map[string]any); ok {
 		status.Stats = stats
-	}
-	if agent, ok := raw["agent"].(map[string]any); ok {
-		if status.ActiveEngine == "" && boolMapValue(agent, "available") {
-			status.ActiveEngine = "ndpi-agent"
-		}
-		if !boolMapValue(agent, "available") && status.Reason == "" {
-			status.Reason = stringMapValue(agent, "error")
-		}
 	}
 	return status
 }

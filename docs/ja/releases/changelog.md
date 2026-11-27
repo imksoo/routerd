@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+- 未使用の周期適用オプション、DNSリゾルバーとRA observerの重複した状態・イベント履歴、DHCP relayのソケット／API直送経路、旧in-process healthcheck runner、独立したDPI classifierプロセスを削除しました。デーモンの現在状態、DHCP通知の永続キュー、独立healthcheck unit、ndpi-agentへの直接分類は維持します。
+
 ## v20261127.1548
 
 - DNSリゾルバーは、リスナーの異常終了と応答の送信失敗をエラーとして扱います。キャッシュのロックを保持したままイベントを記録せず、上流DNSサーバーの正常・停止イベントは状態が変わったときだけ記録します。
